@@ -33,7 +33,7 @@ jobs:
           keytool -genkey -v -keystore /home/runner/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || true
           cp /home/runner/.android/debug.keystore /home/runner/.config/.android/debug.keystore || true
 
-      - name: Configurar Polar TV (Fix Doble Retroceso y Favoritos Accesibles)
+      - name: Configurar Polar TV (Favoritos D-Pad Long Press y Tecla Directa)
         run: |
           # 1. Regenerar base Android limpia
           flutter create --platforms=android --project-name polartv --org com.polar .
@@ -377,8 +377,9 @@ jobs:
           }
           EOF
 
-          # 6. ChannelsScreen: Con botón de favoritos visible y soporte para mantener presionado OK (Long Press)
+          # 6. ChannelsScreen: Soporte de Long Press de D-Pad medido con Timer y Tecla Play/Menu para Favoritos
           cat << 'EOF' > lib/screens/channels_screen.dart
+          import 'dart:async';
           import 'package:flutter/material.dart';
           import 'package:flutter/services.dart';
           import 'package:shared_preferences/shared_preferences.dart';
@@ -426,15 +427,43 @@ jobs:
             }
 
             Future<void> _toggleFav(Channel c) async {
+              final isNowFav = !_favUrls.contains(c.url);
               setState(() {
-                if (_favUrls.contains(c.url)) {
-                  _favUrls.remove(c.url);
-                } else {
+                if (isNowFav) {
                   _favUrls.add(c.url);
+                } else {
+                  _favUrls.remove(c.url);
                 }
               });
               final prefs = await SharedPreferences.getInstance();
               await prefs.setStringList('polar_favs', _favUrls.toList());
+
+              if (mounted) {
+                ScaffoldMessenger.of(context).clearSnackBars();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    duration: const Duration(milliseconds: 1400),
+                    backgroundColor: const Color(0xFF11171A),
+                    behavior: SnackBarBehavior.floating,
+                    margin: const EdgeInsets.only(bottom: 24, left: 40, right: 40),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(color: const Color(0xFF00F5D4).withOpacity(0.4)),
+                    ),
+                    content: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(isNowFav ? Icons.star_rounded : Icons.star_border_rounded, color: const Color(0xFF00F5D4), size: 22),
+                        const SizedBox(width: 10),
+                        Text(
+                          isNowFav ? '${c.name} añadido a Favoritos' : '${c.name} quitado de Favoritos',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
               _applyFilter();
             }
 
@@ -473,7 +502,6 @@ jobs:
                       icon: Icon(_showSearch ? Icons.close : Icons.search_rounded, color: Colors.white70),
                       onPressed: () => setState(() => _showSearch = !_showSearch),
                     ),
-                    // Botón de Pestaña Favoritos Destacado
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
                       child: TextButton.icon(
@@ -594,7 +622,6 @@ jobs:
                                                   ),
                                                 ),
                                               ).then((_) {
-                                                // Recargar favoritos al volver del reproductor
                                                 _init();
                                               });
                                             },
@@ -631,19 +658,62 @@ jobs:
 
           class _ExecutiveChannelTileState extends State<_ExecutiveChannelTile> {
             bool _focused = false;
+            Timer? _longPressTimer;
+            bool _longPressTriggered = false;
+
+            void _cancelTimer() {
+              _longPressTimer?.cancel();
+              _longPressTimer = null;
+            }
+
+            @override
+            void dispose() {
+              _cancelTimer();
+              super.dispose();
+            }
 
             @override
             Widget build(BuildContext context) {
               return Focus(
                 autofocus: widget.autofocus,
-                onFocusChange: (has) => setState(() => _focused = has),
+                onFocusChange: (has) {
+                  if (!has) _cancelTimer();
+                  setState(() => _focused = has);
+                },
                 onKeyEvent: (node, event) {
+                  final isOkKey = event.logicalKey == LogicalKeyboardKey.select ||
+                                  event.logicalKey == LogicalKeyboardKey.enter ||
+                                  event.logicalKey == LogicalKeyboardKey.numpadEnter ||
+                                  event.logicalKey == LogicalKeyboardKey.gameButtonA;
+
+                  // Teclas directas de control remoto para Favoritos (Play, Menu, Info)
+                  final isFavKey = event.logicalKey == LogicalKeyboardKey.mediaPlayPause ||
+                                   event.logicalKey == LogicalKeyboardKey.mediaPlay ||
+                                   event.logicalKey == LogicalKeyboardKey.contextMenu ||
+                                   event.logicalKey == LogicalKeyboardKey.info;
+
                   if (event is KeyDownEvent) {
-                    if (event.logicalKey == LogicalKeyboardKey.select ||
-                        event.logicalKey == LogicalKeyboardKey.enter ||
-                        event.logicalKey == LogicalKeyboardKey.numpadEnter ||
-                        event.logicalKey == LogicalKeyboardKey.gameButtonA) {
-                      widget.onTap();
+                    if (isFavKey) {
+                      widget.onToggleFav();
+                      return KeyEventResult.handled;
+                    }
+
+                    if (isOkKey) {
+                      if (_longPressTimer == null && !_longPressTriggered) {
+                        _longPressTimer = Timer(const Duration(milliseconds: 550), () {
+                          _longPressTriggered = true;
+                          widget.onToggleFav();
+                        });
+                      }
+                      return KeyEventResult.handled;
+                    }
+                  } else if (event is KeyUpEvent) {
+                    if (isOkKey) {
+                      _cancelTimer();
+                      if (!_longPressTriggered) {
+                        widget.onTap();
+                      }
+                      _longPressTriggered = false;
                       return KeyEventResult.handled;
                     }
                   }
@@ -725,19 +795,21 @@ jobs:
                             ],
                           ),
                         ),
-                        // Botón de Favorito directo en esquina
                         Positioned(
                           top: 2,
                           right: 2,
-                          child: IconButton(
-                            iconSize: 18,
-                            padding: const EdgeInsets.all(4),
-                            constraints: const BoxConstraints(),
-                            icon: Icon(
-                              widget.isFav ? Icons.star_rounded : Icons.star_outline_rounded,
-                              color: widget.isFav ? const Color(0xFF00F5D4) : Colors.white24,
+                          child: Focus(
+                            canRequestFocus: false,
+                            child: IconButton(
+                              iconSize: 18,
+                              padding: const EdgeInsets.all(4),
+                              constraints: const BoxConstraints(),
+                              icon: Icon(
+                                widget.isFav ? Icons.star_rounded : Icons.star_outline_rounded,
+                                color: widget.isFav ? const Color(0xFF00F5D4) : Colors.white24,
+                              ),
+                              onPressed: widget.onToggleFav,
                             ),
-                            onPressed: widget.onToggleFav,
                           ),
                         ),
                       ],
@@ -749,7 +821,7 @@ jobs:
           }
           EOF
 
-          # 7. PlayerScreen: Anti-rebote definitivo para retroceso y botón de favorito integrado
+          # 7. PlayerScreen
           cat << 'EOF' > lib/screens/player_screen.dart
           import 'dart:async';
           import 'package:flutter/material.dart';
@@ -904,11 +976,11 @@ jobs:
                   _toggleControls();
                   return KeyEventResult.handled;
                 } else if (event.logicalKey == LogicalKeyboardKey.contextMenu ||
-                           event.logicalKey == LogicalKeyboardKey.info) {
+                           event.logicalKey == LogicalKeyboardKey.info ||
+                           event.logicalKey == LogicalKeyboardKey.mediaPlayPause) {
                   _toggleFav();
                   return KeyEventResult.handled;
                 }
-                // NO interceptamos escape / goBack aquí: dejamos que PopScope lo maneje de forma atómica
               }
               return KeyEventResult.ignored;
             }
@@ -1018,7 +1090,6 @@ jobs:
                                                 ],
                                               ),
                                             ),
-                                            // Botón Favorito en el Reproductor
                                             IconButton(
                                               icon: Icon(
                                                 _isCurrentFav ? Icons.star_rounded : Icons.star_outline_rounded,
