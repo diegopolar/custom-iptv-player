@@ -27,15 +27,13 @@ jobs:
       - name: Instalar ImageMagick y configurar permisos
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
-          # Asegurar permisos de usuario en el runner
           mkdir -p /home/runner/.android /home/runner/.config/.android
           sudo chown -R $USER:$USER /home/runner
           
-          # Generar debug.keystore local garantizado
           keytool -genkey -v -keystore /home/runner/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || true
           cp /home/runner/.android/debug.keystore /home/runner/.config/.android/debug.keystore || true
 
-      - name: Configurar Polar TV (UI Premium, Favoritos, Listas Fijas, PiP y Logo Polar)
+      - name: Configurar Polar TV (Pantalla Siempre Encendida, PiP y UI)
         run: |
           # 1. Regenerar estructura Android limpia
           flutter create --platforms=android --project-name polartv --org com.polar .
@@ -78,17 +76,25 @@ jobs:
           </manifest>
           EOF
 
-          # 3. PiP nativo en MainActivity.kt
+          # 3. MainActivity.kt: PiP nativo y bloqueo de apagado de pantalla (FLAG_KEEP_SCREEN_ON)
           mkdir -p android/app/src/main/kotlin/com/polar/polartv
           cat << 'EOF' > android/app/src/main/kotlin/com/polar/polartv/MainActivity.kt
           package com.polar.polartv
 
           import android.app.PictureInPictureParams
           import android.os.Build
+          import android.os.Bundle
           import android.util.Rational
+          import android.view.WindowManager
           import io.flutter.embedding.android.FlutterActivity
 
           class MainActivity: FlutterActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  // Mantiene la pantalla siempre encendida sin atenuar brillo ni suspender
+                  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+              }
+
               override fun onUserLeaveHint() {
                   super.onUserLeaveHint()
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
