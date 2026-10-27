@@ -24,38 +24,109 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Configurar Polar TV, Lista M3U y Orientacion Vertical
+      - name: Instalar herramientas gráficas para el logo
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
+      - name: Configurar Polar TV, PiP (Ventana Flotante) y Logo de Oso Panda
         run: |
           # 1. Respaldar Manifest configurado por Claude
           cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.xml.bak
           
-          # 2. Generar estructura Android base con nombre Polar TV
+          # 2. Generar estructura Android base
           flutter create --platforms=android --project-name polartv --org com.polar .
           
           # 3. Restaurar Manifest original
           cp /tmp/AndroidManifest.xml.bak android/app/src/main/AndroidManifest.xml
           
-          # 4. Asegurar nombre "Polar TV" y quitar bloqueo de pantalla landscape en AndroidManifest
+          # 4. Inyectar soporte para Ventana Flotante (PiP), orientación libre y nombre
           sed -i 's/android:label="[^"]*"/android:label="Polar TV"/g' android/app/src/main/AndroidManifest.xml
           sed -i 's/android:screenOrientation="landscape"/android:screenOrientation="unspecified"/g' android/app/src/main/AndroidManifest.xml
           
-          # 5. Cambiar título en main.dart
+          # Agregar soporte Picture-in-Picture en la actividad principal
+          if ! grep -q "supportsPictureInPicture" android/app/src/main/AndroidManifest.xml; then
+            sed -i 's/<activity/<activity android:supportsPictureInPicture="true" android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"/g' android/app/src/main/AndroidManifest.xml
+          fi
+          
+          # 5. Cambiar título interno en main.dart
           if [ -f lib/main.dart ]; then
             sed -i "s/title: '[^']*'/title: 'Polar TV'/g" lib/main.dart
             sed -i 's/title: "[^"]*"/title: "Polar TV"/g' lib/main.dart
           fi
 
-          # 6. Precargar lista M3U por defecto en home_screen.dart
-          if [ -f lib/screens/home_screen.dart ]; then
-            sed -i "s|TextEditingController()|TextEditingController(text: 'https://iptv-org.github.io/iptv/index.m3u')|g" lib/screens/home_screen.dart
-          fi
-
-          # 7. Permitir orientación vertical en player_screen.dart
+          # 6. Permitir orientación vertical en player_screen.dart
           if [ -f lib/screens/player_screen.dart ]; then
             sed -i 's/DeviceOrientation.landscapeLeft,/DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft,/g' lib/screens/player_screen.dart
           fi
 
-          # 8. Forzar compileSdk 36 para compatibilidad de plugins
+          # 7. Precargar las dos listas (Perú y Global) en playlist_storage.dart
+          python3 -c '
+          import os
+
+          storage_path = "lib/services/playlist_storage.dart"
+          if os.path.exists(storage_path):
+              with open(storage_path, "r") as f:
+                  content = f.read()
+              
+              replacement = """
+                if (list.isEmpty) {
+                  return [
+                    Playlist(id: "pe", name: "Canales Perú", url: "https://iptv-org.github.io/iptv/countries/pe.m3u", isLocal: false, addedAt: DateTime.now()),
+                    Playlist(id: "global", name: "Canales Globales", url: "https://iptv-org.github.io/iptv/index.m3u", isLocal: false, addedAt: DateTime.now())
+                  ];
+                }
+              """
+              if "return list;" in content:
+                  content = content.replace("return list;", replacement + "\n    return list;")
+              elif "return playlists;" in content:
+                  content = content.replace("return playlists;", replacement.replace("list", "playlists") + "\n    return playlists;")
+              
+              with open(storage_path, "w") as f:
+                  f.write(content)
+          '
+
+          # 8. Generar el logo vectorial de Oso Panda (1024x1024)
+          mkdir -p assets
+          cat << 'EOF' > assets/panda.svg
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="1024" height="1024">
+            <rect width="512" height="512" rx="120" fill="#121212"/>
+            <!-- Orejas -->
+            <circle cx="140" cy="140" r="55" fill="#1F1F1F" stroke="#00E5FF" stroke-width="8"/>
+            <circle cx="372" cy="140" r="55" fill="#1F1F1F" stroke="#00E5FF" stroke-width="8"/>
+            <!-- Cabeza -->
+            <ellipse cx="256" cy="275" rx="165" ry="145" fill="#FFFFFF"/>
+            <!-- Manchas Ojos -->
+            <ellipse cx="190" cy="255" rx="42" ry="52" fill="#1F1F1F" transform="rotate(-15 190 255)"/>
+            <ellipse cx="322" cy="255" rx="42" ry="52" fill="#1F1F1F" transform="rotate(15 322 255)"/>
+            <!-- Ojos brillantes / pupilas -->
+            <circle cx="198" cy="245" r="14" fill="#00E5FF"/>
+            <circle cx="202" cy="241" r="5" fill="#FFFFFF"/>
+            <circle cx="314" cy="245" r="14" fill="#00E5FF"/>
+            <circle cx="310" cy="241" r="5" fill="#FFFFFF"/>
+            <!-- Nariz y Boca -->
+            <ellipse cx="256" cy="315" rx="26" ry="17" fill="#1F1F1F"/>
+            <path d="M 236 338 Q 256 355 276 338" stroke="#1F1F1F" stroke-width="8" stroke-linecap="round" fill="none"/>
+            <!-- Letras Polar TV sutiles al pie -->
+            <text x="256" y="470" font-family="Arial, sans-serif" font-weight="900" font-size="44" fill="#00E5FF" text-anchor="middle" letter-spacing="4">POLAR TV</text>
+          </svg>
+          EOF
+
+          # Convertir SVG a PNG de alta resolución
+          convert -background none assets/panda.svg assets/app_icon.png
+
+          # 9. Agregar generador de íconos en pubspec.yaml
+          cat << 'EOF' >> pubspec.yaml
+
+          dev_dependencies:
+            flutter_launcher_icons: ^0.13.1
+
+          flutter_launcher_icons:
+            android: "launcher_icon"
+            image_path: "assets/app_icon.png"
+            adaptive_icon_background: "#121212"
+            adaptive_icon_foreground: "assets/app_icon.png"
+          EOF
+
+          # 10. Forzar compileSdk 36 para compatibilidad de plugins
           cat << 'EOF' >> android/build.gradle
 
           subprojects {
@@ -69,8 +140,9 @@ jobs:
           }
           EOF
 
-          # 9. Obtener paquetes de Flutter
+          # 11. Descargar paquetes y compilar íconos
           flutter pub get
+          dart run flutter_launcher_icons
 
       - name: Compilar APK con Gradle
         run: |
