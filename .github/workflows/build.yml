@@ -24,27 +24,38 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Configurar proyecto Android y renombrar a Polar TV
+      - name: Configurar Polar TV, Lista M3U y Orientacion Vertical
         run: |
-          # 1. Respaldar Manifest de streaming de Claude
+          # 1. Respaldar Manifest configurado por Claude
           cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.xml.bak
           
-          # 2. Generar estructura Android con nombre Polar TV
+          # 2. Generar estructura Android base con nombre Polar TV
           flutter create --platforms=android --project-name polartv --org com.polar .
           
-          # 3. Restaurar Manifest de Claude
+          # 3. Restaurar Manifest original
           cp /tmp/AndroidManifest.xml.bak android/app/src/main/AndroidManifest.xml
           
-          # 4. Inyectar nombre visible "Polar TV" en AndroidManifest
+          # 4. Asegurar nombre "Polar TV" y quitar bloqueo de pantalla landscape en AndroidManifest
           sed -i 's/android:label="[^"]*"/android:label="Polar TV"/g' android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:screenOrientation="landscape"/android:screenOrientation="unspecified"/g' android/app/src/main/AndroidManifest.xml
           
-          # 5. Cambiar título interno en main.dart si existe
+          # 5. Cambiar título en main.dart
           if [ -f lib/main.dart ]; then
             sed -i "s/title: '[^']*'/title: 'Polar TV'/g" lib/main.dart
             sed -i 's/title: "[^"]*"/title: "Polar TV"/g' lib/main.dart
           fi
 
-          # 6. Forzar compileSdk 36 para compatibilidad con plugins
+          # 6. Precargar lista M3U por defecto en home_screen.dart
+          if [ -f lib/screens/home_screen.dart ]; then
+            sed -i "s|TextEditingController()|TextEditingController(text: 'https://iptv-org.github.io/iptv/index.m3u')|g" lib/screens/home_screen.dart
+          fi
+
+          # 7. Permitir orientación vertical en player_screen.dart
+          if [ -f lib/screens/player_screen.dart ]; then
+            sed -i 's/DeviceOrientation.landscapeLeft,/DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft,/g' lib/screens/player_screen.dart
+          fi
+
+          # 8. Forzar compileSdk 36 para compatibilidad de plugins
           cat << 'EOF' >> android/build.gradle
 
           subprojects {
@@ -58,10 +69,10 @@ jobs:
           }
           EOF
 
-          # 7. Obtener paquetes de Flutter
+          # 9. Obtener paquetes de Flutter
           flutter pub get
 
-      - name: Compilar APK con Gradle directo
+      - name: Compilar APK con Gradle
         run: |
           cd android
           chmod +x gradlew
