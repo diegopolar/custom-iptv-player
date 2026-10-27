@@ -24,8 +24,10 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Instalar ImageMagick
-        run: sudo apt-get update && sudo apt-get install -y imagemagick
+      - name: Instalar ImageMagick y NDK estable
+        run: |
+          sudo apt-get update && sudo apt-get install -y imagemagick
+          echo "y" | sudo ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.2.12479018" || true
 
       - name: Configurar Polar TV (UI Premium, Favoritos, Listas Fijas, PiP y Logo Polar)
         run: |
@@ -148,7 +150,7 @@ jobs:
           }
           EOF
 
-          # 5. HomeScreen con parámetros isLocal corregidos
+          # 5. HomeScreen con parámetros isLocal y listas por defecto
           cat << 'EOF' > lib/screens/home_screen.dart
           import 'package:flutter/material.dart';
           import '../models/channel.dart';
@@ -371,7 +373,7 @@ jobs:
           }
           EOF
 
-          # 6. ChannelsScreen con parámetro index corregido en PlayerScreen
+          # 6. ChannelsScreen con índice correcto en PlayerScreen
           cat << 'EOF' > lib/screens/channels_screen.dart
           import 'package:flutter/material.dart';
           import 'package:shared_preferences/shared_preferences.dart';
@@ -600,7 +602,7 @@ jobs:
                                                                   size: 40,
                                                                   color: Color(0xFF00E5FF),
                                                                 ),
-                                                              )
+                                                             )
                                                             : const Icon(
                                                                 Icons.live_tv,
                                                                 size: 40,
@@ -710,7 +712,7 @@ jobs:
           convert -background none /tmp/polar_bear.svg -resize 144x144 $RES/mipmap-xxhdpi/ic_launcher.png
           convert -background none /tmp/polar_bear.svg -resize 192x192 $RES/mipmap-xxxhdpi/ic_launcher.png
 
-          # 9. Forzar compileSdk 36 en plugins
+          # 9. Forzar compileSdk 36 y NDK preinstalado estable
           cat << 'EOF' >> android/build.gradle
 
           subprojects {
@@ -718,6 +720,7 @@ jobs:
                   if (project.hasProperty('android')) {
                       project.android {
                           compileSdkVersion 36
+                          ndkVersion "27.2.12479018"
                       }
                   }
               }
@@ -735,7 +738,7 @@ jobs:
       - name: Preparar archivo para descarga
         run: |
           mkdir -p output_apk
-          cp $(find android/app/build/outputs/apk/release/ -name "*.apk" | head -n 1) output_apk/PolarTV.apk
+          find . -name "*.apk" -exec cp {} output_apk/PolarTV.apk \;
           ls -lh output_apk/
 
       - name: Subir APK de Polar TV
