@@ -27,12 +27,12 @@ jobs:
       - name: Instalar ImageMagick
         run: sudo apt-get update && sudo apt-get install -y imagemagick
 
-      - name: Configurar Polar TV, PiP, Listas y Logo de Oso Polar
+      - name: Configurar Polar TV (UI Premium, Favoritos, Listas Fijas, PiP y Logo Polar)
         run: |
-          # 1. Generar base Android
+          # 1. Regenerar estructura Android limpia
           flutter create --platforms=android --project-name polartv --org com.polar .
 
-          # 2. Configurar AndroidManifest con soporte PiP y streaming
+          # 2. Configurar AndroidManifest con soporte PiP, pantalla encendida y streaming
           cat << 'EOF' > android/app/src/main/AndroidManifest.xml
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET"/>
@@ -70,7 +70,7 @@ jobs:
           </manifest>
           EOF
 
-          # 3. Soporte PiP nativo al minimizar la app
+          # 3. PiP nativo en MainActivity.kt
           mkdir -p android/app/src/main/kotlin/com/polar/polartv
           cat << 'EOF' > android/app/src/main/kotlin/com/polar/polartv/MainActivity.kt
           package com.polar.polartv
@@ -97,7 +97,575 @@ jobs:
           }
           EOF
 
-          # 4. Ajustar orientacion en player_screen.dart y Wakelock
+          # 4. Tema Ártico y Título en main.dart
+          cat << 'EOF' > lib/main.dart
+          import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart';
+          import 'screens/home_screen.dart';
+
+          void main() {
+            WidgetsFlutterBinding.ensureInitialized();
+            SystemChrome.setSystemUIOverlayStyle(
+              const SystemUiOverlayStyle(
+                statusBarColor: Colors.transparent,
+                statusBarIconBrightness: Brightness.light,
+              ),
+            );
+            runApp(const PolarTvApp());
+          }
+
+          class PolarTvApp extends StatelessWidget {
+            const PolarTvApp({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                title: 'Polar TV',
+                debugShowCheckedModeBanner: false,
+                theme: ThemeData.dark().copyWith(
+                  scaffoldBackgroundColor: const Color(0xFF0B132B),
+                  primaryColor: const Color(0xFF00E5FF),
+                  colorScheme: const ColorScheme.dark(
+                    primary: Color(0xFF00E5FF),
+                    secondary: Color(0xFF48CAE4),
+                    surface: Color(0xFF1C2541),
+                  ),
+                  appBarTheme: const AppBarTheme(
+                    backgroundColor: Color(0xFF0B132B),
+                    elevation: 0,
+                    centerTitle: true,
+                    titleTextStyle: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.5,
+                      color: Color(0xFF00E5FF),
+                    ),
+                  ),
+                ),
+                home: const HomeScreen(),
+              );
+            }
+          }
+          EOF
+
+          # 5. HomeScreen rediseñado: Listas precargadas visibles y soporte para añadir personalizadas
+          cat << 'EOF' > lib/screens/home_screen.dart
+          import 'package:flutter/material.dart';
+          import '../models/channel.dart';
+          import '../services/playlist_storage.dart';
+          import 'channels_screen.dart';
+
+          class HomeScreen extends StatefulWidget {
+            const HomeScreen({super.key});
+
+            @override
+            State<HomeScreen> createState() => _HomeScreenState();
+          }
+
+          class _HomeScreenState extends State<HomeScreen> {
+            final PlaylistStorage _store = PlaylistStorage();
+            final TextEditingController _urlCtrl = TextEditingController();
+            final TextEditingController _nameCtrl = TextEditingController();
+            List<Playlist> _playlists = [];
+            bool _loading = true;
+
+            static final List<Playlist> _defaults = [
+              const Playlist(
+                id: 'pe',
+                name: 'Canales Perú 🇵🇪',
+                source: 'https://iptv-org.github.io/iptv/countries/pe.m3u',
+              ),
+              const Playlist(
+                id: 'global',
+                name: 'Canales Globales 🌐',
+                source: 'https://iptv-org.github.io/iptv/index.m3u',
+              ),
+            ];
+
+            @override
+            void initState() {
+              super.initState();
+              _load();
+            }
+
+            Future<void> _load() async {
+              setState(() => _loading = true);
+              final saved = await _store.getAll();
+              if (saved.isEmpty) {
+                for (final p in _defaults) {
+                  await _store.add(p);
+                }
+                _playlists = List.from(_defaults);
+              } else {
+                _playlists = saved;
+              }
+              if (mounted) setState(() => _loading = false);
+            }
+
+            void _showAddDialog() {
+              _urlCtrl.clear();
+              _nameCtrl.clear();
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: const Color(0xFF1C2541),
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                ),
+                builder: (ctx) => Padding(
+                  padding: EdgeInsets.only(
+                    left: 20,
+                    right: 20,
+                    top: 24,
+                    bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'Añadir Lista M3U',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF00E5FF)),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: _nameCtrl,
+                        decoration: InputDecoration(
+                          labelText: 'Nombre de la lista (ej: Deportes)',
+                          filled: true,
+                          fillColor: const Color(0xFF0B132B),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _urlCtrl,
+                        decoration: InputDecoration(
+                          labelText: 'URL de la lista .m3u o .m3u8',
+                          filled: true,
+                          fillColor: const Color(0xFF0B132B),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF00E5FF),
+                          foregroundColor: const Color(0xFF0B132B),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: () async {
+                          final url = _urlCtrl.text.trim();
+                          final name = _nameCtrl.text.trim();
+                          if (url.isNotEmpty) {
+                            final pl = Playlist(
+                              id: DateTime.now().millisecondsSinceEpoch.toString(),
+                              name: name.isEmpty ? 'Mi Lista' : name,
+                              source: url,
+                            );
+                            await _store.add(pl);
+                            Navigator.pop(ctx);
+                            _load();
+                          }
+                        },
+                        child: const Text('Guardar y Cargar', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      )
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00E5FF).withOpacity(0.15),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.tv, color: Color(0xFF00E5FF), size: 22),
+                      ),
+                      const SizedBox(width: 10),
+                      const Text('POLAR TV'),
+                    ],
+                  ),
+                  actions: [
+                    IconButton(
+                      icon: const Icon(Icons.add_circle_outline, color: Color(0xFF00E5FF), size: 28),
+                      tooltip: 'Añadir Lista',
+                      onPressed: _showAddDialog,
+                    ),
+                  ],
+                ),
+                body: _loading
+                    ? const Center(child: CircularProgressIndicator(color: Color(0xFF00E5FF)))
+                    : ListView(
+                        padding: const EdgeInsets.all(18),
+                        children: [
+                          const Text(
+                            'Mis Listas de Transmisión',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white70),
+                          ),
+                          const SizedBox(height: 14),
+                          ..._playlists.map((pl) => Container(
+                                margin: const EdgeInsets.only(bottom: 14),
+                                decoration: BoxDecoration(
+                                  gradient: const LinearGradient(
+                                    colors: [Color(0xFF1C2541), Color(0xFF16203B)],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(color: Colors.white.withOpacity(0.08)),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.3),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                                  leading: CircleAvatar(
+                                    backgroundColor: const Color(0xFF00E5FF).withOpacity(0.15),
+                                    radius: 24,
+                                    child: Icon(
+                                      pl.name.contains('Perú') ? Icons.flag : Icons.public,
+                                      color: const Color(0xFF00E5FF),
+                                    ),
+                                  ),
+                                  title: Text(
+                                    pl.name,
+                                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white),
+                                  ),
+                                  subtitle: Text(
+                                    pl.source,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.5)),
+                                  ),
+                                  trailing: const Icon(Icons.arrow_forward_ios, color: Color(0xFF00E5FF), size: 18),
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (_) => ChannelsScreen(playlist: pl)),
+                                    );
+                                  },
+                                ),
+                              )),
+                        ],
+                      ),
+              );
+            }
+          }
+          EOF
+
+          # 6. ChannelsScreen rediseñado: Cuadrícula didáctica, Favoritos instantáneos y Filtro por categorías
+          cat << 'EOF' > lib/screens/channels_screen.dart
+          import 'dart:convert';
+          import 'package:flutter/material.dart';
+          import 'package:shared_preferences/shared_preferences.dart';
+          import '../models/channel.dart';
+          import '../services/playlist_storage.dart';
+          import 'player_screen.dart';
+
+          class ChannelsScreen extends StatefulWidget {
+            final Playlist playlist;
+            const ChannelsScreen({super.key, required this.playlist});
+
+            @override
+            State<ChannelsScreen> createState() => _ChannelsScreenState();
+          }
+
+          class _ChannelsScreenState extends State<ChannelsScreen> {
+            List<Channel> _all = [];
+            List<Channel> _filtered = [];
+            Set<String> _favUrls = {};
+            String _selectedCategory = 'Todos';
+            String _query = '';
+            bool _loading = true;
+            bool _onlyFavs = false;
+
+            @override
+            void initState() {
+              super.initState();
+              _init();
+            }
+
+            Future<void> _init() async {
+              final prefs = await SharedPreferences.getInstance();
+              final favs = prefs.getStringList('polar_favs') ?? [];
+              _favUrls = favs.toSet();
+
+              try {
+                final channels = await PlaylistStorage().loadChannels(widget.playlist);
+                _all = channels;
+                _applyFilter();
+              } catch (_) {}
+
+              if (mounted) setState(() => _loading = false);
+            }
+
+            Future<void> _toggleFav(Channel c) async {
+              setState(() {
+                if (_favUrls.contains(c.url)) {
+                  _favUrls.remove(c.url);
+                } else {
+                  _favUrls.add(c.url);
+                }
+              });
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setStringList('polar_favs', _favUrls.toList());
+              _applyFilter();
+            }
+
+            void _applyFilter() {
+              setState(() {
+                _filtered = _all.where((c) {
+                  final matchesQuery = c.name.toLowerCase().contains(_query.toLowerCase());
+                  final matchesCat = _selectedCategory == 'Todos' || c.group == _selectedCategory;
+                  final matchesFav = !_onlyFavs || _favUrls.contains(c.url);
+                  return matchesQuery && matchesCat && matchesFav;
+                }).toList();
+              });
+            }
+
+            List<String> get _categories {
+              final set = <String>{'Todos'};
+              for (final c in _all) {
+                if (c.group.isNotEmpty) set.add(c.group);
+              }
+              return set.toList();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: Text(widget.playlist.name),
+                  actions: [
+                    IconButton(
+                      icon: Icon(
+                        _onlyFavs ? Icons.star : Icons.star_border,
+                        color: _onlyFavs ? Colors.amberAccent : Colors.white70,
+                        size: 28,
+                      ),
+                      tooltip: 'Ver Favoritos',
+                      onPressed: () {
+                        setState(() => _onlyFavs = !_onlyFavs);
+                        _applyFilter();
+                      },
+                    ),
+                  ],
+                ),
+                body: _loading
+                    ? const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(color: Color(0xFF00E5FF)),
+                            SizedBox(height: 16),
+                            Text('Cargando señales de Polar TV...', style: TextStyle(color: Colors.white70)),
+                          ],
+                        ),
+                      )
+                    : Column(
+                        children: [
+                          // Buscador
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            child: TextField(
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
+                                hintText: 'Buscar canal...',
+                                hintStyle: const TextStyle(color: Colors.white38),
+                                prefixIcon: const Icon(Icons.search, color: Color(0xFF00E5FF)),
+                                filled: true,
+                                fillColor: const Color(0xFF1C2541),
+                                contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                              onChanged: (v) {
+                                _query = v;
+                                _applyFilter();
+                              },
+                            ),
+                          ),
+
+                          // Chips de categorías
+                          if (!_onlyFavs && _categories.length > 1)
+                            SizedBox(
+                              height: 44,
+                              child: ListView.builder(
+                                scrollDirection: Axis.horizontal,
+                                padding: const EdgeInsets.symmetric(horizontal: 12),
+                                itemCount: _categories.length,
+                                itemBuilder: (ctx, i) {
+                                  final cat = _categories[i];
+                                  final isSel = cat == _selectedCategory;
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                                    child: ChoiceChip(
+                                      label: Text(cat),
+                                      selected: isSel,
+                                      selectedColor: const Color(0xFF00E5FF),
+                                      backgroundColor: const Color(0xFF1C2541),
+                                      labelStyle: TextStyle(
+                                        color: isSel ? const Color(0xFF0B132B) : Colors.white70,
+                                        fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                                      ),
+                                      onSelected: (val) {
+                                        if (val) {
+                                          setState(() => _selectedCategory = cat);
+                                          _applyFilter();
+                                        }
+                                      },
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+
+                          const SizedBox(height: 6),
+
+                          // Cuadrícula didáctica de canales
+                          Expanded(
+                            child: _filtered.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      _onlyFavs ? 'No tienes canales favoritos aún' : 'No se encontraron canales',
+                                      style: const TextStyle(color: Colors.white54, fontSize: 16),
+                                    ),
+                                  )
+                                : GridView.builder(
+                                    padding: const EdgeInsets.all(12),
+                                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: 2,
+                                      childAspectRatio: 1.35,
+                                      crossAxisSpacing: 12,
+                                      mainAxisSpacing: 12,
+                                    ),
+                                    itemCount: _filtered.length,
+                                    itemBuilder: (ctx, i) {
+                                      final c = _filtered[i];
+                                      final isFav = _favUrls.contains(c.url);
+                                      return InkWell(
+                                        borderRadius: BorderRadius.circular(16),
+                                        onTap: () {
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) => PlayerScreen(
+                                                channels: _filtered,
+                                                initialIndex: i,
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            gradient: const LinearGradient(
+                                              colors: [Color(0xFF1C2541), Color(0xFF151D33)],
+                                              begin: Alignment.topLeft,
+                                              end: Alignment.bottomRight,
+                                            ),
+                                            borderRadius: BorderRadius.circular(16),
+                                            border: Border.all(
+                                              color: isFav
+                                                  ? Colors.amberAccent.withOpacity(0.5)
+                                                  : Colors.white.withOpacity(0.06),
+                                            ),
+                                          ),
+                                          child: Stack(
+                                            children: [
+                                              Padding(
+                                                padding: const EdgeInsets.all(12),
+                                                child: Column(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    // Logo o ícono del canal
+                                                    Expanded(
+                                                      child: Center(
+                                                        child: c.logo != null && c.logo!.isNotEmpty
+                                                            ? Image.network(
+                                                                c.logo!,
+                                                                errorBuilder: (_, __, ___) => const Icon(
+                                                                  Icons.live_tv,
+                                                                  size: 40,
+                                                                  color: Color(0xFF00E5FF),
+                                                                ),
+                                                              )
+                                                            : const Icon(
+                                                                Icons.live_tv,
+                                                                size: 40,
+                                                                color: Color(0xFF00E5FF),
+                                                              ),
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 8),
+                                                    // Nombre del canal
+                                                    Text(
+                                                      c.name,
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                      style: const TextStyle(
+                                                        fontSize: 14,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: Colors.white,
+                                                      ),
+                                                    ),
+                                                    if (c.group.isNotEmpty)
+                                                      Text(
+                                                        c.group,
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow.ellipsis,
+                                                        style: TextStyle(
+                                                          fontSize: 11,
+                                                          color: const Color(0xFF00E5FF).withOpacity(0.8),
+                                                        ),
+                                                      ),
+                                                  ],
+                                                ),
+                                              ),
+                                              // Botón de Favorito
+                                              Positioned(
+                                                top: 4,
+                                                right: 4,
+                                                child: IconButton(
+                                                  icon: Icon(
+                                                    isFav ? Icons.star : Icons.star_border,
+                                                    color: isFav ? Colors.amberAccent : Colors.white38,
+                                                    size: 22,
+                                                  ),
+                                                  onPressed: () => _toggleFav(c),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                          ),
+                        ],
+                      ),
+              );
+            }
+          }
+          EOF
+
+          # 7. Ajustar orientación vertical y pantalla encendida en player_screen.dart
           python3 -c '
           import os
 
@@ -111,36 +679,7 @@ jobs:
                   f.write(code)
           '
 
-          # 5. Inyectar listas por defecto en playlist_storage.dart
-          python3 -c '
-          import os
-
-          storage_path = "lib/services/playlist_storage.dart"
-          if os.path.exists(storage_path):
-              with open(storage_path, "r") as f:
-                  code = f.read()
-              
-              hook = "return list;"
-              replacement = """if (list.isEmpty) {
-                    final defaultList = [
-                      Playlist(id: "pe", name: "Canales Perú 🇵🇪", source: "https://iptv-org.github.io/iptv/countries/pe.m3u"),
-                      Playlist(id: "global", name: "Canales Globales 🌐", source: "https://iptv-org.github.io/iptv/index.m3u"),
-                    ];
-                    for (final p in defaultList) {
-                      await add(p);
-                    }
-                    return defaultList;
-                  }
-                  return list;"""
-              
-              if hook in code and "Canales Perú" not in code:
-                  code = code.replace(hook, replacement, 1)
-              
-              with open(storage_path, "w") as f:
-                  f.write(code)
-          '
-
-          # 6. Crear logo vectorial del Oso Polar
+          # 8. Generar Logo Oficial de Oso Polar en alta resolución
           cat << 'EOF' > /tmp/polar_bear.svg
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
             <defs>
@@ -178,7 +717,7 @@ jobs:
           convert -background none /tmp/polar_bear.svg -resize 144x144 $RES/mipmap-xxhdpi/ic_launcher.png
           convert -background none /tmp/polar_bear.svg -resize 192x192 $RES/mipmap-xxxhdpi/ic_launcher.png
 
-          # 7. Forzar compileSdk 36 en plugins
+          # 9. Forzar compileSdk 36 en plugins
           cat << 'EOF' >> android/build.gradle
 
           subprojects {
