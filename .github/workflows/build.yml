@@ -97,34 +97,38 @@ jobs:
           }
           EOF
 
-          # 4. Ajustar orientacion en player_screen.dart
+          # 4. Ajustar orientación vertical en player_screen.dart
           if [ -f lib/screens/player_screen.dart ]; then
             sed -i 's/DeviceOrientation.landscapeLeft,/DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft,/g' lib/screens/player_screen.dart
           fi
 
-          # 5. Precargar listas (Perú y Global) en home_screen.dart
+          # 5. Inyectar listas por defecto en playlist_storage.dart usando el constructor exacto
           python3 -c '
           import os
 
-          home_path = "lib/screens/home_screen.dart"
-          if os.path.exists(home_path):
-              with open(home_path, "r") as f:
+          storage_path = "lib/services/playlist_storage.dart"
+          if os.path.exists(storage_path):
+              with open(storage_path, "r") as f:
                   code = f.read()
               
-              hook = "final l = await _store.getAll();"
-              injection = """final l = await _store.getAll();
-                  if (l.isEmpty) {
-                    try {
-                      await _store.add(Playlist(name: "Canales Perú 🇵🇪", source: "https://iptv-org.github.io/iptv/countries/pe.m3u"));
-                      await _store.add(Playlist(name: "Canales Globales 🌐", source: "https://iptv-org.github.io/iptv/index.m3u"));
-                      final updated = await _store.getAll();
-                      if (mounted) setState(() => _playlists = updated);
-                    } catch (_) {}
-                  }"""
-              if hook in code and "Canales Perú" not in code:
-                  code = code.replace(hook, injection, 1)
+              # Detectar la llamada donde devuelve la lista guardada e inyectar si está vacía
+              hook = "return list;"
+              replacement = """if (list.isEmpty) {
+                    final defaultList = [
+                      Playlist(id: "pe", name: "Canales Perú 🇵🇪", source: "https://iptv-org.github.io/iptv/countries/pe.m3u"),
+                      Playlist(id: "global", name: "Canales Globales 🌐", source: "https://iptv-org.github.io/iptv/index.m3u"),
+                    ];
+                    for (final p in defaultList) {
+                      await add(p);
+                    }
+                    return defaultList;
+                  }
+                  return list;"""
               
-              with open(home_path, "w") as f:
+              if hook in code and "Canales Perú" not in code:
+                  code = code.replace(hook, replacement, 1)
+              
+              with open(storage_path, "w") as f:
                   f.write(code)
           '
 
@@ -182,7 +186,7 @@ jobs:
 
           flutter pub get
 
-      - name: Compilar APK Release oficial
+      - name: Compilar APK Release
         run: flutter build apk --release
 
       - name: Subir APK de Polar TV
