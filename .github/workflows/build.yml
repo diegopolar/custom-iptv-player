@@ -24,12 +24,12 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Instalar herramientas gráficas para el logo
+      - name: Instalar ImageMagick para procesar el logo
         run: sudo apt-get update && sudo apt-get install -y imagemagick
 
-      - name: Configurar Polar TV, PiP (Ventana Flotante) y Logo de Oso Panda
+      - name: Configurar Polar TV, PiP, Listas y Logo de Panda
         run: |
-          # 1. Respaldar Manifest configurado por Claude
+          # 1. Respaldar Manifest original
           cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.xml.bak
           
           # 2. Generar estructura Android base
@@ -38,11 +38,10 @@ jobs:
           # 3. Restaurar Manifest original
           cp /tmp/AndroidManifest.xml.bak android/app/src/main/AndroidManifest.xml
           
-          # 4. Inyectar soporte para Ventana Flotante (PiP), orientación libre y nombre
+          # 4. Inyectar nombre "Polar TV", orientación libre y soporte PiP (Ventana Flotante)
           sed -i 's/android:label="[^"]*"/android:label="Polar TV"/g' android/app/src/main/AndroidManifest.xml
           sed -i 's/android:screenOrientation="landscape"/android:screenOrientation="unspecified"/g' android/app/src/main/AndroidManifest.xml
           
-          # Agregar soporte Picture-in-Picture en la actividad principal
           if ! grep -q "supportsPictureInPicture" android/app/src/main/AndroidManifest.xml; then
             sed -i 's/<activity/<activity android:supportsPictureInPicture="true" android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"/g' android/app/src/main/AndroidManifest.xml
           fi
@@ -58,7 +57,7 @@ jobs:
             sed -i 's/DeviceOrientation.landscapeLeft,/DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft,/g' lib/screens/player_screen.dart
           fi
 
-          # 7. Precargar las dos listas (Perú y Global) en playlist_storage.dart
+          # 7. Precargar listas (Perú y Global) en playlist_storage.dart
           python3 -c '
           import os
 
@@ -84,49 +83,40 @@ jobs:
                   f.write(content)
           '
 
-          # 8. Generar el logo vectorial de Oso Panda (1024x1024)
-          mkdir -p assets
-          cat << 'EOF' > assets/panda.svg
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="1024" height="1024">
-            <rect width="512" height="512" rx="120" fill="#121212"/>
+          # 8. Crear diseño vectorial del Oso Panda
+          cat << 'EOF' > /tmp/panda.svg
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+            <rect width="512" height="512" rx="110" fill="#111827"/>
             <!-- Orejas -->
-            <circle cx="140" cy="140" r="55" fill="#1F1F1F" stroke="#00E5FF" stroke-width="8"/>
-            <circle cx="372" cy="140" r="55" fill="#1F1F1F" stroke="#00E5FF" stroke-width="8"/>
+            <circle cx="140" cy="140" r="56" fill="#1F2937" stroke="#06B6D4" stroke-width="8"/>
+            <circle cx="372" cy="140" r="56" fill="#1F2937" stroke="#06B6D4" stroke-width="8"/>
             <!-- Cabeza -->
-            <ellipse cx="256" cy="275" rx="165" ry="145" fill="#FFFFFF"/>
+            <ellipse cx="256" cy="275" rx="160" ry="140" fill="#F9FAFB"/>
             <!-- Manchas Ojos -->
-            <ellipse cx="190" cy="255" rx="42" ry="52" fill="#1F1F1F" transform="rotate(-15 190 255)"/>
-            <ellipse cx="322" cy="255" rx="42" ry="52" fill="#1F1F1F" transform="rotate(15 322 255)"/>
-            <!-- Ojos brillantes / pupilas -->
-            <circle cx="198" cy="245" r="14" fill="#00E5FF"/>
-            <circle cx="202" cy="241" r="5" fill="#FFFFFF"/>
-            <circle cx="314" cy="245" r="14" fill="#00E5FF"/>
-            <circle cx="310" cy="241" r="5" fill="#FFFFFF"/>
-            <!-- Nariz y Boca -->
-            <ellipse cx="256" cy="315" rx="26" ry="17" fill="#1F1F1F"/>
-            <path d="M 236 338 Q 256 355 276 338" stroke="#1F1F1F" stroke-width="8" stroke-linecap="round" fill="none"/>
-            <!-- Letras Polar TV sutiles al pie -->
-            <text x="256" y="470" font-family="Arial, sans-serif" font-weight="900" font-size="44" fill="#00E5FF" text-anchor="middle" letter-spacing="4">POLAR TV</text>
+            <ellipse cx="190" cy="255" rx="42" ry="50" fill="#1F2937" transform="rotate(-15 190 255)"/>
+            <ellipse cx="322" cy="255" rx="42" ry="50" fill="#1F2937" transform="rotate(15 322 255)"/>
+            <!-- Pupilas Celestes -->
+            <circle cx="196" cy="248" r="14" fill="#06B6D4"/>
+            <circle cx="200" cy="244" r="5" fill="#FFFFFF"/>
+            <circle cx="316" cy="248" r="14" fill="#06B6D4"/>
+            <circle cx="312" cy="244" r="5" fill="#FFFFFF"/>
+            <!-- Nariz y Hocico -->
+            <ellipse cx="256" cy="315" rx="24" ry="16" fill="#1F2937"/>
+            <path d="M 238 338 Q 256 352 274 338" stroke="#1F2937" stroke-width="7" stroke-linecap="round" fill="none"/>
+            <!-- Texto Polar TV -->
+            <text x="256" y="465" font-family="Arial, sans-serif" font-weight="900" font-size="42" fill="#06B6D4" text-anchor="middle" letter-spacing="3">POLAR TV</text>
           </svg>
           EOF
 
-          # Convertir SVG a PNG de alta resolución
-          convert -background none assets/panda.svg assets/app_icon.png
+          # Generar los iconos de Android directamente en todas las densidades de pantalla
+          RES="android/app/src/main/res"
+          convert -background none /tmp/panda.svg -resize 48x48   $RES/mipmap-mdpi/ic_launcher.png
+          convert -background none /tmp/panda.svg -resize 72x72   $RES/mipmap-hdpi/ic_launcher.png
+          convert -background none /tmp/panda.svg -resize 96x96   $RES/mipmap-xhdpi/ic_launcher.png
+          convert -background none /tmp/panda.svg -resize 144x144 $RES/mipmap-xxhdpi/ic_launcher.png
+          convert -background none /tmp/panda.svg -resize 192x192 $RES/mipmap-xxxhdpi/ic_launcher.png
 
-          # 9. Agregar generador de íconos en pubspec.yaml
-          cat << 'EOF' >> pubspec.yaml
-
-          dev_dependencies:
-            flutter_launcher_icons: ^0.13.1
-
-          flutter_launcher_icons:
-            android: "launcher_icon"
-            image_path: "assets/app_icon.png"
-            adaptive_icon_background: "#121212"
-            adaptive_icon_foreground: "assets/app_icon.png"
-          EOF
-
-          # 10. Forzar compileSdk 36 para compatibilidad de plugins
+          # 9. Forzar compileSdk 36 en todos los subproyectos
           cat << 'EOF' >> android/build.gradle
 
           subprojects {
@@ -140,9 +130,8 @@ jobs:
           }
           EOF
 
-          # 11. Descargar paquetes y compilar íconos
+          # 10. Obtener paquetes limpios
           flutter pub get
-          dart run flutter_launcher_icons
 
       - name: Compilar APK con Gradle
         run: |
@@ -160,4 +149,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Polar-TV-APK
-          path: apk_output/PolarTV-release.apk
+          path: apk
