@@ -24,40 +24,64 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Instalar ImageMagick para procesar el logo
+      - name: Instalar ImageMagick
         run: sudo apt-get update && sudo apt-get install -y imagemagick
 
       - name: Configurar Polar TV, PiP, Listas y Logo de Panda
         run: |
-          # 1. Respaldar Manifest original
-          cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.xml.bak
-          
-          # 2. Generar estructura Android base
+          # 1. Generar estructura Android base con nombre Polar TV
           flutter create --platforms=android --project-name polartv --org com.polar .
-          
-          # 3. Restaurar Manifest original
-          cp /tmp/AndroidManifest.xml.bak android/app/src/main/AndroidManifest.xml
-          
-          # 4. Inyectar nombre "Polar TV", orientación libre y soporte PiP (Ventana Flotante)
-          sed -i 's/android:label="[^"]*"/android:label="Polar TV"/g' android/app/src/main/AndroidManifest.xml
-          sed -i 's/android:screenOrientation="landscape"/android:screenOrientation="unspecified"/g' android/app/src/main/AndroidManifest.xml
-          
-          if ! grep -q "supportsPictureInPicture" android/app/src/main/AndroidManifest.xml; then
-            sed -i 's/<activity/<activity android:supportsPictureInPicture="true" android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"/g' android/app/src/main/AndroidManifest.xml
-          fi
-          
-          # 5. Cambiar título interno en main.dart
+
+          # 2. Escribir AndroidManifest.xml completo y validado
+          cat << 'EOF' > android/app/src/main/AndroidManifest.xml
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+              <uses-permission android:name="android.permission.WAKE_LOCK"/>
+
+              <application
+                  android:label="Polar TV"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher"
+                  android:usesCleartextTraffic="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:taskAffinity=""
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:supportsPictureInPicture="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <meta-data
+                        android:name="io.flutter.embedding.android.NormalTheme"
+                        android:resource="@style/NormalTheme"
+                        />
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2" />
+              </application>
+          </manifest>
+          EOF
+
+          # 3. Cambiar título interno en main.dart
           if [ -f lib/main.dart ]; then
             sed -i "s/title: '[^']*'/title: 'Polar TV'/g" lib/main.dart
             sed -i 's/title: "[^"]*"/title: "Polar TV"/g' lib/main.dart
           fi
 
-          # 6. Permitir orientación vertical en player_screen.dart
+          # 4. Permitir orientación vertical en player_screen.dart
           if [ -f lib/screens/player_screen.dart ]; then
             sed -i 's/DeviceOrientation.landscapeLeft,/DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft,/g' lib/screens/player_screen.dart
           fi
 
-          # 7. Precargar listas (Perú y Global) en playlist_storage.dart
+          # 5. Precargar listas (Perú y Global) en playlist_storage.dart
           python3 -c '
           import os
 
@@ -83,7 +107,7 @@ jobs:
                   f.write(content)
           '
 
-          # 8. Crear diseño vectorial del Oso Panda
+          # 6. Generar el logo vectorial de Oso Panda (512x512)
           cat << 'EOF' > /tmp/panda.svg
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
             <rect width="512" height="512" rx="110" fill="#111827"/>
@@ -95,7 +119,7 @@ jobs:
             <!-- Manchas Ojos -->
             <ellipse cx="190" cy="255" rx="42" ry="50" fill="#1F2937" transform="rotate(-15 190 255)"/>
             <ellipse cx="322" cy="255" rx="42" ry="50" fill="#1F2937" transform="rotate(15 322 255)"/>
-            <!-- Pupilas Celestes -->
+            <!-- Ojos celestes -->
             <circle cx="196" cy="248" r="14" fill="#06B6D4"/>
             <circle cx="200" cy="244" r="5" fill="#FFFFFF"/>
             <circle cx="316" cy="248" r="14" fill="#06B6D4"/>
@@ -108,7 +132,7 @@ jobs:
           </svg>
           EOF
 
-          # Generar los iconos de Android directamente en todas las densidades de pantalla
+          # Generar los iconos de Android para todas las resoluciones
           RES="android/app/src/main/res"
           convert -background none /tmp/panda.svg -resize 48x48   $RES/mipmap-mdpi/ic_launcher.png
           convert -background none /tmp/panda.svg -resize 72x72   $RES/mipmap-hdpi/ic_launcher.png
@@ -116,7 +140,7 @@ jobs:
           convert -background none /tmp/panda.svg -resize 144x144 $RES/mipmap-xxhdpi/ic_launcher.png
           convert -background none /tmp/panda.svg -resize 192x192 $RES/mipmap-xxxhdpi/ic_launcher.png
 
-          # 9. Forzar compileSdk 36 en todos los subproyectos
+          # 7. Forzar compileSdk 36 para compatibilidad de dependencias
           cat << 'EOF' >> android/build.gradle
 
           subprojects {
@@ -130,7 +154,7 @@ jobs:
           }
           EOF
 
-          # 10. Obtener paquetes limpios
+          # 8. Obtener paquetes limpios
           flutter pub get
 
       - name: Compilar APK con Gradle
@@ -149,4 +173,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Polar-TV-APK
-          path: apk
+          path: apk_output/PolarTV-release.apk
