@@ -433,4 +433,314 @@ jobs:
               setState(() {
                 _filtered = _all.where((c) {
                   final matchesQuery = c.name.toLowerCase().contains(_query.toLowerCase());
-                  final matchesCat = _selectedCategory ==
+                  final matchesCat = _selectedCategory == 'Todos' || c.group == _selectedCategory;
+                  final matchesFav = !_onlyFavs || _favUrls.contains(c.url);
+                  return matchesQuery && matchesCat && matchesFav;
+                }).toList();
+              });
+            }
+
+            List<String> get _categories {
+              final set = <String>{'Todos'};
+              for (final c in _all) {
+                if (c.group.isNotEmpty) set.add(c.group);
+              }
+              return set.toList();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: Text(widget.playlist.name),
+                  actions: [
+                    IconButton(
+                      icon: Icon(
+                        _onlyFavs ? Icons.star : Icons.star_border,
+                        color: _onlyFavs ? Colors.amberAccent : Colors.white70,
+                        size: 28,
+                      ),
+                      tooltip: 'Ver Favoritos',
+                      onPressed: () {
+                        setState(() => _onlyFavs = !_onlyFavs);
+                        _applyFilter();
+                      },
+                    ),
+                  ],
+                ),
+                body: _loading
+                    ? const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(color: Color(0xFF00E5FF)),
+                            SizedBox(height: 16),
+                            Text('Cargando señales de Polar TV...', style: TextStyle(color: Colors.white70)),
+                          ],
+                        ),
+                      )
+                    : Column(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            child: TextField(
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
+                                hintText: 'Buscar canal...',
+                                hintStyle: const TextStyle(color: Colors.white38),
+                                prefixIcon: const Icon(Icons.search, color: Color(0xFF00E5FF)),
+                                filled: true,
+                                fillColor: const Color(0xFF1C2541),
+                                contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                              onChanged: (v) {
+                                _query = v;
+                                _applyFilter();
+                              },
+                            ),
+                          ),
+                          if (!_onlyFavs && _categories.length > 1)
+                            SizedBox(
+                              height: 44,
+                              child: ListView.builder(
+                                scrollDirection: Axis.horizontal,
+                                padding: const EdgeInsets.symmetric(horizontal: 12),
+                                itemCount: _categories.length,
+                                itemBuilder: (ctx, i) {
+                                  final cat = _categories[i];
+                                  final isSel = cat == _selectedCategory;
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                                    child: ChoiceChip(
+                                      label: Text(cat),
+                                      selected: isSel,
+                                      selectedColor: const Color(0xFF00E5FF),
+                                      backgroundColor: const Color(0xFF1C2541),
+                                      labelStyle: TextStyle(
+                                        color: isSel ? const Color(0xFF0B132B) : Colors.white70,
+                                        fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                                      ),
+                                      onSelected: (val) {
+                                        if (val) {
+                                          setState(() => _selectedCategory = cat);
+                                          _applyFilter();
+                                        }
+                                      },
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          const SizedBox(height: 6),
+                          Expanded(
+                            child: _filtered.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      _onlyFavs ? 'No tienes canales favoritos aún' : 'No se encontraron canales',
+                                      style: const TextStyle(color: Colors.white54, fontSize: 16),
+                                    ),
+                                  )
+                                : GridView.builder(
+                                    padding: const EdgeInsets.all(12),
+                                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: 2,
+                                      childAspectRatio: 1.35,
+                                      crossAxisSpacing: 12,
+                                      mainAxisSpacing: 12,
+                                    ),
+                                    itemCount: _filtered.length,
+                                    itemBuilder: (ctx, i) {
+                                      final c = _filtered[i];
+                                      final isFav = _favUrls.contains(c.url);
+                                      return InkWell(
+                                        borderRadius: BorderRadius.circular(16),
+                                        onTap: () {
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) => PlayerScreen(
+                                                channels: _filtered,
+                                                index: i,
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            gradient: const LinearGradient(
+                                              colors: [Color(0xFF1C2541), Color(0xFF151D33)],
+                                              begin: Alignment.topLeft,
+                                              end: Alignment.bottomRight,
+                                            ),
+                                            borderRadius: BorderRadius.circular(16),
+                                            border: Border.all(
+                                              color: isFav
+                                                  ? Colors.amberAccent.withOpacity(0.5)
+                                                  : Colors.white.withOpacity(0.06),
+                                            ),
+                                          ),
+                                          child: Stack(
+                                            children: [
+                                              Padding(
+                                                padding: const EdgeInsets.all(12),
+                                                child: Column(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Expanded(
+                                                      child: Center(
+                                                        child: c.logo != null && c.logo!.isNotEmpty
+                                                            ? Image.network(
+                                                                c.logo!,
+                                                                errorBuilder: (_, __, ___) => const Icon(
+                                                                  Icons.live_tv,
+                                                                  size: 40,
+                                                                  color: Color(0xFF00E5FF),
+                                                                ),
+                                                              )
+                                                            : const Icon(
+                                                                Icons.live_tv,
+                                                                size: 40,
+                                                                color: Color(0xFF00E5FF),
+                                                              ),
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 8),
+                                                    Text(
+                                                      c.name,
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                      style: const TextStyle(
+                                                        fontSize: 14,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: Colors.white,
+                                                      ),
+                                                    ),
+                                                    if (c.group.isNotEmpty)
+                                                      Text(
+                                                        c.group,
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow.ellipsis,
+                                                        style: TextStyle(
+                                                          fontSize: 11,
+                                                          color: const Color(0xFF00E5FF).withOpacity(0.8),
+                                                        ),
+                                                      ),
+                                                  ],
+                                                ),
+                                              ),
+                                              Positioned(
+                                                top: 4,
+                                                right: 4,
+                                                child: IconButton(
+                                                  icon: Icon(
+                                                    isFav ? Icons.star : Icons.star_border,
+                                                    color: isFav ? Colors.amberAccent : Colors.white38,
+                                                    size: 22,
+                                                  ),
+                                                  onPressed: () => _toggleFav(c),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                          ),
+                        ],
+                      ),
+              );
+            }
+          }
+          EOF
+
+          # 7. Orientación vertical libre en player_screen.dart
+          python3 -c '
+          import os
+
+          player_path = "lib/screens/player_screen.dart"
+          if os.path.exists(player_path):
+              with open(player_path, "r") as f:
+                  code = f.read()
+              
+              code = code.replace("DeviceOrientation.landscapeLeft,", "DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft,")
+              with open(player_path, "w") as f:
+                  f.write(code)
+          '
+
+          # 8. Logo Oficial de Oso Polar
+          cat << 'EOF' > /tmp/polar_bear.svg
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+            <defs>
+              <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#0B132B"/>
+                <stop offset="100%" stop-color="#1C2541"/>
+              </linearGradient>
+              <linearGradient id="ice" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#FFFFFF"/>
+                <stop offset="100%" stop-color="#D0EDF2"/>
+              </linearGradient>
+            </defs>
+            <rect width="512" height="512" rx="120" fill="url(#bg)"/>
+            <circle cx="150" cy="155" r="46" fill="#E2F6F9"/>
+            <circle cx="150" cy="155" r="26" fill="#A8D5DE"/>
+            <circle cx="362" cy="155" r="46" fill="#E2F6F9"/>
+            <circle cx="362" cy="155" r="26" fill="#A8D5DE"/>
+            <ellipse cx="256" cy="285" rx="160" ry="140" fill="url(#ice)"/>
+            <circle cx="195" cy="245" r="13" fill="#0B132B"/>
+            <circle cx="199" cy="241" r="4.5" fill="#FFFFFF"/>
+            <circle cx="317" cy="245" r="13" fill="#0B132B"/>
+            <circle cx="321" cy="241" r="4.5" fill="#FFFFFF"/>
+            <ellipse cx="256" cy="325" rx="72" ry="58" fill="#F8FEFF"/>
+            <path d="M 230 300 Q 256 290 282 300 Q 256 332 230 300 Z" fill="#0B132B"/>
+            <line x1="256" y1="316" x2="256" y2="340" stroke="#0B132B" stroke-width="6" stroke-linecap="round"/>
+            <path d="M 236 340 Q 256 352 276 340" stroke="#0B132B" stroke-width="6" fill="none" stroke-linecap="round"/>
+            <text x="256" y="468" font-family="sans-serif" font-weight="900" font-size="38" fill="#00E5FF" text-anchor="middle" letter-spacing="4">POLAR TV</text>
+          </svg>
+          EOF
+
+          RES="android/app/src/main/res"
+          convert -background none /tmp/polar_bear.svg -resize 48x48   $RES/mipmap-mdpi/ic_launcher.png
+          convert -background none /tmp/polar_bear.svg -resize 72x72   $RES/mipmap-hdpi/ic_launcher.png
+          convert -background none /tmp/polar_bear.svg -resize 96x96   $RES/mipmap-xhdpi/ic_launcher.png
+          convert -background none /tmp/polar_bear.svg -resize 144x144 $RES/mipmap-xxhdpi/ic_launcher.png
+          convert -background none /tmp/polar_bear.svg -resize 192x192 $RES/mipmap-xxxhdpi/ic_launcher.png
+
+          # 9. Forzar compileSdk 36 en plugins
+          cat << 'EOF' >> android/build.gradle
+
+          subprojects {
+              afterEvaluate { project ->
+                  if (project.hasProperty('android')) {
+                      project.android {
+                          compileSdkVersion 36
+                      }
+                  }
+              }
+          }
+          EOF
+
+          flutter pub get
+
+      - name: Compilar APK con Gradle
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Preparar archivo para descarga
+        run: |
+          mkdir -p output_apk
+          cp $(find android/app/build/outputs/apk/release/ -name "*.apk" | head -n 1) output_apk/PolarTV.apk
+          ls -lh output_apk/
+
+      - name: Subir APK de Polar TV
+        uses: actions/upload-artifact@v4
+        with:
+          name: Polar-TV-APK
+          path: output_apk/PolarTV.apk
+          if-no-files-found: error
