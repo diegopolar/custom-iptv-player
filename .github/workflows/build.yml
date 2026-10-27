@@ -24,10 +24,16 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Instalar ImageMagick y NDK estable
+      - name: Instalar ImageMagick y configurar permisos
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
-          echo "y" | sudo ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.2.12479018" || true
+          # Asegurar permisos de usuario en el runner
+          mkdir -p /home/runner/.android /home/runner/.config/.android
+          sudo chown -R $USER:$USER /home/runner
+          
+          # Generar debug.keystore local garantizado
+          keytool -genkey -v -keystore /home/runner/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || true
+          cp /home/runner/.android/debug.keystore /home/runner/.config/.android/debug.keystore || true
 
       - name: Configurar Polar TV (UI Premium, Favoritos, Listas Fijas, PiP y Logo Polar)
         run: |
@@ -712,7 +718,23 @@ jobs:
           convert -background none /tmp/polar_bear.svg -resize 144x144 $RES/mipmap-xxhdpi/ic_launcher.png
           convert -background none /tmp/polar_bear.svg -resize 192x192 $RES/mipmap-xxxhdpi/ic_launcher.png
 
-          # 9. Forzar compileSdk 36 y NDK preinstalado estable
+          # 9. Configuración de firma con debug keystore y compileSdk 36
+          cat << 'EOF' >> android/app/build.gradle.kts
+
+          android {
+              signingConfigs {
+                  getByName("debug") {
+                      storeFile = file("/home/runner/.android/debug.keystore")
+                  }
+              }
+              buildTypes {
+                  getByName("release") {
+                      signingConfig = signingConfigs.getByName("debug")
+                  }
+              }
+          }
+          EOF
+
           cat << 'EOF' >> android/build.gradle
 
           subprojects {
@@ -720,7 +742,6 @@ jobs:
                   if (project.hasProperty('android')) {
                       project.android {
                           compileSdkVersion 36
-                          ndkVersion "27.2.12479018"
                       }
                   }
               }
