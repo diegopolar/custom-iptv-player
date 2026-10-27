@@ -24,15 +24,32 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Regenerar estructura Android y respetar Manifest
+      - name: Regenerar estructura Android y ajustar compileSdk
         run: |
-          # Respaldar Manifest configurado para streaming
+          # 1. Respaldar Manifest configurado por Claude
           cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.xml.bak
-          # Generar la infraestructura Gradle nativa
+          
+          # 2. Generar estructura Gradle nativa
           flutter create --platforms=android --org com.example .
-          # Restaurar Manifest con permisos de red y TV
+          
+          # 3. Restaurar Manifest
           cp /tmp/AndroidManifest.xml.bak android/app/src/main/AndroidManifest.xml
-          # Obtener dependencias
+          
+          # 4. Forzar compileSdk 36 en el proyecto y en todos los subproyectos (plugins como file_picker)
+          cat << 'EOF' >> android/build.gradle
+
+          subprojects {
+              afterEvaluate { project ->
+                  if (project.hasProperty('android')) {
+                      project.android {
+                          compileSdkVersion 36
+                      }
+                  }
+              }
+          }
+          EOF
+
+          # 5. Obtener paquetes
           flutter pub get
 
       - name: Compilar APK Release
