@@ -1,0 +1,45 @@
+name: Build Custom IPTV APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Regenerar estructura Android y respetar Manifest
+        run: |
+          # Respaldar Manifest configurado para streaming
+          cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.xml.bak
+          # Generar la infraestructura Gradle nativa
+          flutter create --platforms=android --org com.example .
+          # Restaurar Manifest con permisos de red y TV
+          cp /tmp/AndroidManifest.xml.bak android/app/src/main/AndroidManifest.xml
+          # Obtener dependencias
+          flutter pub get
+
+      - name: Compilar APK Release
+        run: flutter build apk --release
+
+      - name: Subir APK generado
+        uses: actions/upload-artifact@v4
+        with:
+          name: custom-iptv-player-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
