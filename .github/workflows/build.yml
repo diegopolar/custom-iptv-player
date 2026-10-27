@@ -27,12 +27,12 @@ jobs:
       - name: Instalar ImageMagick
         run: sudo apt-get update && sudo apt-get install -y imagemagick
 
-      - name: Configurar Polar TV, PiP, Listas y Logo de Panda
+      - name: Configurar Polar TV (Listas fijas, PiP nativo, Wakelock y Logo Oso Polar)
         run: |
           # 1. Generar estructura Android base con nombre Polar TV
           flutter create --platforms=android --project-name polartv --org com.polar .
 
-          # 2. Escribir AndroidManifest.xml completo y validado
+          # 2. Configurar AndroidManifest.xml con soporte completo PiP
           cat << 'EOF' > android/app/src/main/AndroidManifest.xml
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET"/>
@@ -70,77 +70,165 @@ jobs:
           </manifest>
           EOF
 
-          # 3. Cambiar título interno en main.dart
+          # 3. Inyectar soporte nativo PiP en MainActivity.kt al salir de la app
+          mkdir -p android/app/src/main/kotlin/com/polar/polartv
+          cat << 'EOF' > android/app/src/main/kotlin/com/polar/polartv/MainActivity.kt
+          package com.polar.polartv
+
+          import android.app.PictureInPictureParams
+          import android.os.Build
+          import android.util.Rational
+          import io.flutter.embedding.android.FlutterActivity
+
+          class MainActivity: FlutterActivity() {
+              override fun onUserLeaveHint() {
+                  super.onUserLeaveHint()
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      try {
+                          val params = PictureInPictureParams.Builder()
+                              .setAspectRatio(Rational(16, 9))
+                              .build()
+                          enterPictureInPictureMode(params)
+                      } catch (e: Exception) {
+                          enterPictureInPictureMode()
+                      }
+                  }
+              }
+          }
+          EOF
+
+          # 4. Asegurar título en main.dart
           if [ -f lib/main.dart ]; then
             sed -i "s/title: '[^']*'/title: 'Polar TV'/g" lib/main.dart
             sed -i 's/title: "[^"]*"/title: "Polar TV"/g' lib/main.dart
           fi
 
-          # 4. Permitir orientación vertical en player_screen.dart
+          # 5. Evitar bloqueo de pantalla (Wakelock) y habilitar vertical en player_screen.dart
           if [ -f lib/screens/player_screen.dart ]; then
+            # Permitir rotación vertical
             sed -i 's/DeviceOrientation.landscapeLeft,/DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft,/g' lib/screens/player_screen.dart
+            
+            # Mantener pantalla siempre encendida mientras se reproduce
+            sed -i 's/void initState()/void initState() { WakelockPlus.enable();/g' lib/screens/player_screen.dart
           fi
 
-          # 5. Precargar listas (Perú y Global) en playlist_storage.dart
-          python3 -c '
-          import os
+          # 6. Sobrescribir playlist_storage.dart para asegurar las listas Perú y Global
+          cat << 'EOF' > lib/services/playlist_storage.dart
+          import 'dart:convert';
+          import 'package:shared_preferences/shared_preferences.dart';
+          import '../models/channel.dart';
 
-          storage_path = "lib/services/playlist_storage.dart"
-          if os.path.exists(storage_path):
-              with open(storage_path, "r") as f:
-                  content = f.read()
-              
-              replacement = """
-                if (list.isEmpty) {
-                  return [
-                    Playlist(id: "pe", name: "Canales Perú", url: "https://iptv-org.github.io/iptv/countries/pe.m3u", isLocal: false, addedAt: DateTime.now()),
-                    Playlist(id: "global", name: "Canales Globales", url: "https://iptv-org.github.io/iptv/index.m3u", isLocal: false, addedAt: DateTime.now())
-                  ];
-                }
-              """
-              if "return list;" in content:
-                  content = content.replace("return list;", replacement + "\n    return list;")
-              elif "return playlists;" in content:
-                  content = content.replace("return playlists;", replacement.replace("list", "playlists") + "\n    return playlists;")
-              
-              with open(storage_path, "w") as f:
-                  f.write(content)
-          '
+          class PlaylistStorage {
+            static const String _key = 'saved_playlists';
 
-          # 6. Generar el logo vectorial de Oso Panda (512x512)
-          cat << 'EOF' > /tmp/panda.svg
+            static List<Playlist> get defaultPlaylists => [
+              Playlist(
+                id: 'pe',
+                name: 'Canales Perú 🇵🇪',
+                url: 'https://iptv-org.github.io/iptv/countries/pe.m3u',
+                isLocal: false,
+                addedAt: DateTime.now(),
+              ),
+              Playlist(
+                id: 'global',
+                name: 'Canales Globales 🌐',
+                url: 'https://iptv-org.github.io/iptv/index.m3u',
+                isLocal: false,
+                addedAt: DateTime.now(),
+              ),
+            ];
+
+            static Future<List<Playlist>> getPlaylists() async {
+              final prefs = await SharedPreferences.getInstance();
+              final raw = prefs.getString(_key);
+              if (raw == null || raw.isEmpty) {
+                await saveAll(defaultPlaylists);
+                return defaultPlaylists;
+              }
+              try {
+                final List<dynamic> decoded = jsonDecode(raw);
+                final list = decoded.map((e) => Playlist.fromJson(e as Map<String, dynamic>)).toList();
+                return list.isEmpty ? defaultPlaylists : list;
+              } catch (_) {
+                return defaultPlaylists;
+              }
+            }
+
+            static Future<void> savePlaylist(Playlist playlist) async {
+              final list = await getPlaylists();
+              final index = list.indexWhere((p) => p.id == playlist.id);
+              if (index >= 0) {
+                list[index] = playlist;
+              } else {
+                list.add(playlist);
+              }
+              await saveAll(list);
+            }
+
+            static Future<void> saveAll(List<Playlist> playlists) async {
+              final prefs = await SharedPreferences.getInstance();
+              final encoded = jsonEncode(playlists.map((p) => p.toJson()).toList());
+              await prefs.setString(_key, encoded);
+            }
+
+            static Future<void> deletePlaylist(String id) async {
+              final list = await getPlaylists();
+              list.removeWhere((p) => p.id == id);
+              await saveAll(list);
+            }
+          }
+          EOF
+
+          # 7. Logo oficial de Oso Polar (Polar TV)
+          cat << 'EOF' > /tmp/polar_bear.svg
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-            <rect width="512" height="512" rx="110" fill="#111827"/>
-            <!-- Orejas -->
-            <circle cx="140" cy="140" r="56" fill="#1F2937" stroke="#06B6D4" stroke-width="8"/>
-            <circle cx="372" cy="140" r="56" fill="#1F2937" stroke="#06B6D4" stroke-width="8"/>
-            <!-- Cabeza -->
-            <ellipse cx="256" cy="275" rx="160" ry="140" fill="#F9FAFB"/>
-            <!-- Manchas Ojos -->
-            <ellipse cx="190" cy="255" rx="42" ry="50" fill="#1F2937" transform="rotate(-15 190 255)"/>
-            <ellipse cx="322" cy="255" rx="42" ry="50" fill="#1F2937" transform="rotate(15 322 255)"/>
-            <!-- Ojos celestes -->
-            <circle cx="196" cy="248" r="14" fill="#06B6D4"/>
-            <circle cx="200" cy="244" r="5" fill="#FFFFFF"/>
-            <circle cx="316" cy="248" r="14" fill="#06B6D4"/>
-            <circle cx="312" cy="244" r="5" fill="#FFFFFF"/>
-            <!-- Nariz y Hocico -->
-            <ellipse cx="256" cy="315" rx="24" ry="16" fill="#1F2937"/>
-            <path d="M 238 338 Q 256 352 274 338" stroke="#1F2937" stroke-width="7" stroke-linecap="round" fill="none"/>
-            <!-- Texto Polar TV -->
-            <text x="256" y="465" font-family="Arial, sans-serif" font-weight="900" font-size="42" fill="#06B6D4" text-anchor="middle" letter-spacing="3">POLAR TV</text>
+            <defs>
+              <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#0B132B"/>
+                <stop offset="100%" stop-color="#1C2541"/>
+              </linearGradient>
+              <linearGradient id="ice" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#E0FBFC"/>
+                <stop offset="100%" stop-color="#C2DFE3"/>
+              </linearGradient>
+            </defs>
+            <rect width="512" height="512" rx="120" fill="url(#bg)"/>
+            
+            <!-- Orejas Oso Polar -->
+            <circle cx="150" cy="155" r="46" fill="#D4EFF2"/>
+            <circle cx="150" cy="155" r="26" fill="#9BC1BC"/>
+            <circle cx="362" cy="155" r="46" fill="#D4EFF2"/>
+            <circle cx="362" cy="155" r="26" fill="#9BC1BC"/>
+            
+            <!-- Cabeza Maciza Oso Polar -->
+            <ellipse cx="256" cy="285" rx="160" ry="140" fill="url(#ice)"/>
+            
+            <!-- Ojos pequeños y vivaces (típicos de oso polar) -->
+            <circle cx="195" cy="245" r="13" fill="#1C2541"/>
+            <circle cx="199" cy="241" r="4.5" fill="#FFFFFF"/>
+            <circle cx="317" cy="245" r="13" fill="#1C2541"/>
+            <circle cx="321" cy="241" r="4.5" fill="#FFFFFF"/>
+            
+            <!-- Hocico y mejillas anchas -->
+            <ellipse cx="256" cy="325" rx="72" ry="58" fill="#F4FDFF"/>
+            <path d="M 230 300 Q 256 290 282 300 Q 256 332 230 300 Z" fill="#1C2541"/>
+            <line x1="256" y1="316" x2="256" y2="340" stroke="#1C2541" stroke-width="6" stroke-linecap="round"/>
+            <path d="M 236 340 Q 256 352 276 340" stroke="#1C2541" stroke-width="6" fill="none" stroke-linecap="round"/>
+            
+            <!-- Texto Polar TV en tipografía limpia -->
+            <text x="256" y="468" font-family="sans-serif" font-weight="900" font-size="38" fill="#00E5FF" text-anchor="middle" letter-spacing="4">POLAR TV</text>
           </svg>
           EOF
 
-          # Generar los iconos de Android para todas las resoluciones
+          # Generar iconos del Oso Polar en todas las resoluciones
           RES="android/app/src/main/res"
-          convert -background none /tmp/panda.svg -resize 48x48   $RES/mipmap-mdpi/ic_launcher.png
-          convert -background none /tmp/panda.svg -resize 72x72   $RES/mipmap-hdpi/ic_launcher.png
-          convert -background none /tmp/panda.svg -resize 96x96   $RES/mipmap-xhdpi/ic_launcher.png
-          convert -background none /tmp/panda.svg -resize 144x144 $RES/mipmap-xxhdpi/ic_launcher.png
-          convert -background none /tmp/panda.svg -resize 192x192 $RES/mipmap-xxxhdpi/ic_launcher.png
+          convert -background none /tmp/polar_bear.svg -resize 48x48   $RES/mipmap-mdpi/ic_launcher.png
+          convert -background none /tmp/polar_bear.svg -resize 72x72   $RES/mipmap-hdpi/ic_launcher.png
+          convert -background none /tmp/polar_bear.svg -resize 96x96   $RES/mipmap-xhdpi/ic_launcher.png
+          convert -background none /tmp/polar_bear.svg -resize 144x144 $RES/mipmap-xxhdpi/ic_launcher.png
+          convert -background none /tmp/polar_bear.svg -resize 192x192 $RES/mipmap-xxxhdpi/ic_launcher.png
 
-          # 7. Forzar compileSdk 36 para compatibilidad de dependencias
+          # 8. Forzar compileSdk 36 en subproyectos
           cat << 'EOF' >> android/build.gradle
 
           subprojects {
@@ -154,7 +242,7 @@ jobs:
           }
           EOF
 
-          # 8. Obtener paquetes limpios
+          # 9. Descargar paquetes limpios
           flutter pub get
 
       - name: Compilar APK con Gradle
