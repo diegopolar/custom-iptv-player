@@ -33,7 +33,7 @@ jobs:
           keytool -genkey -v -keystore /home/runner/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || true
           cp /home/runner/.android/debug.keystore /home/runner/.config/.android/debug.keystore || true
 
-      - name: Configurar Polar TV (Pantalla Siempre Encendida, PiP y UI)
+      - name: Configurar Polar TV (Controles Visibles, Boton Volver y PiP)
         run: |
           # 1. Regenerar estructura Android limpia
           flutter create --platforms=android --project-name polartv --org com.polar .
@@ -76,7 +76,7 @@ jobs:
           </manifest>
           EOF
 
-          # 3. MainActivity.kt: PiP nativo y bloqueo de apagado de pantalla (FLAG_KEEP_SCREEN_ON)
+          # 3. MainActivity.kt: PiP nativo y pantalla siempre encendida
           mkdir -p android/app/src/main/kotlin/com/polar/polartv
           cat << 'EOF' > android/app/src/main/kotlin/com/polar/polartv/MainActivity.kt
           package com.polar.polartv
@@ -91,7 +91,6 @@ jobs:
           class MainActivity: FlutterActivity() {
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
-                  // Mantiene la pantalla siempre encendida sin atenuar brillo ni suspender
                   window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
               }
 
@@ -385,7 +384,7 @@ jobs:
           }
           EOF
 
-          # 6. ChannelsScreen con índice correcto en PlayerScreen
+          # 6. ChannelsScreen con cuadrícula y favoritos
           cat << 'EOF' > lib/screens/channels_screen.dart
           import 'package:flutter/material.dart';
           import 'package:shared_preferences/shared_preferences.dart';
@@ -672,19 +671,261 @@ jobs:
           }
           EOF
 
-          # 7. Orientación vertical libre en player_screen.dart
-          python3 -c '
-          import os
+          # 7. PlayerScreen mejorado: Botón de Volver siempre accesible y toque en pantalla para mostrar controles
+          cat << 'EOF' > lib/screens/player_screen.dart
+          import 'dart:async';
+          import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart';
+          import 'package:video_player/video_player.dart';
+          import '../models/channel.dart';
 
-          player_path = "lib/screens/player_screen.dart"
-          if os.path.exists(player_path):
-              with open(player_path, "r") as f:
-                  code = f.read()
-              
-              code = code.replace("DeviceOrientation.landscapeLeft,", "DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft,")
-              with open(player_path, "w") as f:
-                  f.write(code)
-          '
+          class PlayerScreen extends StatefulWidget {
+            final List<Channel> channels;
+            final int index;
+
+            const PlayerScreen({super.key, required this.channels, required this.index});
+
+            @override
+            State<PlayerScreen> createState() => _PlayerScreenState();
+          }
+
+          class _PlayerScreenState extends State<PlayerScreen> {
+            late int _currentIndex;
+            VideoPlayerController? _controller;
+            bool _showControls = true;
+            bool _isLoading = true;
+            bool _hasError = false;
+            Timer? _hideTimer;
+
+            @override
+            void initState() {
+              super.initState();
+              _currentIndex = widget.index;
+              _allowAllOrientations();
+              _playChannel();
+            }
+
+            void _allowAllOrientations() {
+              SystemChrome.setPreferredOrientations([
+                DeviceOrientation.portraitUp,
+                DeviceOrientation.portraitDown,
+                DeviceOrientation.landscapeLeft,
+                DeviceOrientation.landscapeRight,
+              ]);
+            }
+
+            Future<void> _playChannel() async {
+              setState(() {
+                _isLoading = true;
+                _hasError = false;
+              });
+
+              await _controller?.dispose();
+              _controller = null;
+
+              final channel = widget.channels[_currentIndex];
+              final uri = Uri.parse(channel.url);
+
+              _controller = VideoPlayerController.networkUrl(uri);
+
+              try {
+                await _controller!.initialize();
+                await _controller!.play();
+                setState(() => _isLoading = false);
+                _resetTimer();
+              } catch (_) {
+                if (mounted) {
+                  setState(() {
+                    _isLoading = false;
+                    _hasError = true;
+                  });
+                }
+              }
+            }
+
+            void _toggleControls() {
+              setState(() {
+                _showControls = !_showControls;
+              });
+              if (_showControls) {
+                _resetTimer();
+              }
+            }
+
+            void _resetTimer() {
+              _hideTimer?.cancel();
+              _hideTimer = Timer(const Duration(seconds: 4), () {
+                if (mounted) setState(() => _showControls = false);
+              });
+            }
+
+            void _nextChannel() {
+              if (_currentIndex < widget.channels.length - 1) {
+                _currentIndex++;
+                _playChannel();
+              }
+            }
+
+            void _prevChannel() {
+              if (_currentIndex > 0) {
+                _currentIndex--;
+                _playChannel();
+              }
+            }
+
+            @override
+            void dispose() {
+              _hideTimer?.cancel();
+              _controller?.dispose();
+              super.dispose();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              final channel = widget.channels[_currentIndex];
+
+              return PopScope(
+                canPop: true,
+                child: Scaffold(
+                  backgroundColor: Colors.black,
+                  body: GestureDetector(
+                    onTap: _toggleControls,
+                    behavior: HitTestBehavior.opaque,
+                    child: Stack(
+                      children: [
+                        // Video Player
+                        Center(
+                          child: _controller != null && _controller!.value.isInitialized
+                              ? AspectRatio(
+                                  aspectRatio: _controller!.value.aspectRatio,
+                                  child: VideoPlayer(_controller!),
+                                )
+                              : _isLoading
+                                  ? const CircularProgressIndicator(color: Color(0xFF00E5FF))
+                                  : _hasError
+                                      ? const Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
+                                            SizedBox(height: 12),
+                                            Text(
+                                              'Señal no disponible en este momento',
+                                              style: TextStyle(color: Colors.white70),
+                                            ),
+                                          ],
+                                        )
+                                      : const SizedBox.shrink(),
+                        ),
+
+                        // Capa de Controles Overlay
+                        AnimatedOpacity(
+                          opacity: _showControls ? 1.0 : 0.0,
+                          duration: const Duration(milliseconds: 250),
+                          child: IgnorePointer(
+                            ignoring: !_showControls,
+                            child: Container(
+                              decoration: const BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [Colors.black87, Colors.transparent, Colors.black87],
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                ),
+                              ),
+                              child: SafeArea(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    // Barra Superior con Botón Volver y Nombre
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                      child: Row(
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 26),
+                                            onPressed: () => Navigator.pop(context),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  channel.name,
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 18,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                                if (channel.group.isNotEmpty)
+                                                  Text(
+                                                    channel.group,
+                                                    style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 12),
+                                                  ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+
+                                    // Botones Centrales para cambiar canal
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(Icons.skip_previous, color: Colors.white, size: 44),
+                                            onPressed: _currentIndex > 0 ? _prevChannel : null,
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(Icons.skip_next, color: Colors.white, size: 44),
+                                            onPressed: _currentIndex < widget.channels.length - 1 ? _nextChannel : null,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+
+                                    // Pie de reproducción
+                                    Padding(
+                                      padding: const EdgeInsets.all(16),
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFF1C2541),
+                                              borderRadius: BorderRadius.circular(20),
+                                            ),
+                                            child: const Row(
+                                              children: [
+                                                Icon(Icons.circle, color: Colors.redAccent, size: 10),
+                                                SizedBox(width: 6),
+                                                Text('EN VIVO', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+          }
+          EOF
 
           # 8. Logo Oficial de Oso Polar
           cat << 'EOF' > /tmp/polar_bear.svg
@@ -724,7 +965,7 @@ jobs:
           convert -background none /tmp/polar_bear.svg -resize 144x144 $RES/mipmap-xxhdpi/ic_launcher.png
           convert -background none /tmp/polar_bear.svg -resize 192x192 $RES/mipmap-xxxhdpi/ic_launcher.png
 
-          # 9. Configuración de firma con debug keystore y compileSdk 36
+          # 9. Configuración de firma y compileSdk 36
           cat << 'EOF' >> android/app/build.gradle.kts
 
           android {
