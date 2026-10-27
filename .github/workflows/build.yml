@@ -33,7 +33,7 @@ jobs:
           keytool -genkey -v -keystore /home/runner/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || true
           cp /home/runner/.android/debug.keystore /home/runner/.config/.android/debug.keystore || true
 
-      - name: Configurar Polar TV Smart TV (Leanback, D-Pad Foco y Banner)
+      - name: Configurar Polar TV Smart TV (Foco directo en canales y navegacion fluida)
         run: |
           # 1. Regenerar estructura Android limpia
           flutter create --platforms=android --project-name polartv --org com.polar .
@@ -45,7 +45,6 @@ jobs:
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
               <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
-              <!-- Soporte para Smart TV sin pantalla táctil requerida -->
               <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
               <uses-feature android:name="android.software.leanback" android:required="false" />
 
@@ -69,12 +68,10 @@ jobs:
                         android:name="io.flutter.embedding.android.NormalTheme"
                         android:resource="@style/NormalTheme"
                         />
-                      <!-- Launcher para Celulares y Tablets -->
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
-                      <!-- Launcher oficial para Android TV y Google TV -->
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
@@ -172,7 +169,7 @@ jobs:
           }
           EOF
 
-          # 5. HomeScreen con navegación por Control Remoto (Focusable)
+          # 5. HomeScreen con tarjetas enfocables por control remoto
           cat << 'EOF' > lib/screens/home_screen.dart
           import 'package:flutter/material.dart';
           import '../models/channel.dart';
@@ -337,15 +334,16 @@ jobs:
                         padding: const EdgeInsets.all(24),
                         children: [
                           const Text(
-                            'Mis Listas de Transmisión (Usa las flechas del control)',
+                            'Mis Listas de Transmisión (Selecciona con OK)',
                             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white70),
                           ),
                           const SizedBox(height: 16),
-                          ..._playlists.map((pl) => _TvFocusableCard(
+                          ..._playlists.asMap().entries.map((entry) => _TvFocusableCard(
+                                autofocus: entry.key == 0,
                                 onTap: () {
                                   Navigator.push(
                                     context,
-                                    MaterialPageRoute(builder: (_) => ChannelsScreen(playlist: pl)),
+                                    MaterialPageRoute(builder: (_) => ChannelsScreen(playlist: entry.value)),
                                   );
                                 },
                                 child: ListTile(
@@ -354,17 +352,17 @@ jobs:
                                     backgroundColor: const Color(0xFF00E5FF).withOpacity(0.15),
                                     radius: 26,
                                     child: Icon(
-                                      pl.name.contains('Perú') ? Icons.flag : Icons.public,
+                                      entry.value.name.contains('Perú') ? Icons.flag : Icons.public,
                                       color: const Color(0xFF00E5FF),
                                       size: 28,
                                     ),
                                   ),
                                   title: Text(
-                                    pl.name,
+                                    entry.value.name,
                                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
                                   ),
                                   subtitle: Text(
-                                    pl.source,
+                                    entry.value.source,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.6)),
@@ -381,7 +379,8 @@ jobs:
           class _TvFocusableCard extends StatefulWidget {
             final Widget child;
             final VoidCallback onTap;
-            const _TvFocusableCard({required this.child, required this.onTap});
+            final bool autofocus;
+            const _TvFocusableCard({required this.child, required this.onTap, this.autofocus = false});
 
             @override
             State<_TvFocusableCard> createState() => _TvFocusableCardState();
@@ -393,6 +392,7 @@ jobs:
             @override
             Widget build(BuildContext context) {
               return Focus(
+                autofocus: widget.autofocus,
                 onFocusChange: (has) => setState(() => _focused = has),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
@@ -430,7 +430,7 @@ jobs:
           }
           EOF
 
-          # 6. ChannelsScreen con soporte de foco de control remoto en cada canal
+          # 6. ChannelsScreen: Foco prioritario en canales para control remoto
           cat << 'EOF' > lib/screens/channels_screen.dart
           import 'package:flutter/material.dart';
           import 'package:shared_preferences/shared_preferences.dart';
@@ -540,30 +540,33 @@ jobs:
                       )
                     : Column(
                         children: [
-                          // Buscador
+                          // Buscador (No roba el foco inicial del control)
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                            child: TextField(
-                              style: const TextStyle(color: Colors.white),
-                              decoration: InputDecoration(
-                                hintText: 'Buscar canal...',
-                                hintStyle: const TextStyle(color: Colors.white38),
-                                prefixIcon: const Icon(Icons.search, color: Color(0xFF00E5FF)),
-                                filled: true,
-                                fillColor: const Color(0xFF1C2541),
-                                contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                  borderSide: BorderSide.none,
+                            child: Focus(
+                              canRequestFocus: true,
+                              child: TextField(
+                                style: const TextStyle(color: Colors.white),
+                                decoration: InputDecoration(
+                                  hintText: 'Buscar canal...',
+                                  hintStyle: const TextStyle(color: Colors.white38),
+                                  prefixIcon: const Icon(Icons.search, color: Color(0xFF00E5FF)),
+                                  filled: true,
+                                  fillColor: const Color(0xFF1C2541),
+                                  contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: BorderSide.none,
+                                  ),
                                 ),
+                                onChanged: (v) {
+                                  _query = v;
+                                  _applyFilter();
+                                },
                               ),
-                              onChanged: (v) {
-                                _query = v;
-                                _applyFilter();
-                              },
                             ),
                           ),
-                          // Chips de categorías
+                          // Categorías
                           if (!_onlyFavs && _categories.length > 1)
                             SizedBox(
                               height: 48,
@@ -597,7 +600,7 @@ jobs:
                               ),
                             ),
                           const SizedBox(height: 8),
-                          // Cuadrícula con soporte para control remoto (D-Pad)
+                          // Cuadrícula con foco automático en el primer canal
                           Expanded(
                             child: _filtered.isEmpty
                                 ? Center(
@@ -608,7 +611,6 @@ jobs:
                                   )
                                 : LayoutBuilder(
                                     builder: (context, constraints) {
-                                      // Ajustar columnas dinámicamente si es pantalla ancha de TV
                                       final isTv = constraints.maxWidth > 800;
                                       final crossCount = isTv ? 4 : 2;
 
@@ -616,7 +618,7 @@ jobs:
                                         padding: const EdgeInsets.all(16),
                                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                                           crossAxisCount: crossCount,
-                                          childAspectRatio: 1.4,
+                                          childAspectRatio: 1.35,
                                           crossAxisSpacing: 16,
                                           mainAxisSpacing: 16,
                                         ),
@@ -625,6 +627,7 @@ jobs:
                                           final c = _filtered[i];
                                           final isFav = _favUrls.contains(c.url);
                                           return _TvChannelTile(
+                                            autofocus: i == 0,
                                             channel: c,
                                             isFav: isFav,
                                             onToggleFav: () => _toggleFav(c),
@@ -656,12 +659,14 @@ jobs:
             final bool isFav;
             final VoidCallback onToggleFav;
             final VoidCallback onTap;
+            final bool autofocus;
 
             const _TvChannelTile({
               required this.channel,
               required this.isFav,
               required this.onToggleFav,
               required this.onTap,
+              this.autofocus = false,
             });
 
             @override
@@ -674,10 +679,11 @@ jobs:
             @override
             Widget build(BuildContext context) {
               return Focus(
+                autofocus: widget.autofocus,
                 onFocusChange: (has) => setState(() => _focused = has),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
-                  transform: _focused ? (Matrix4.identity()..scale(1.05)) : Matrix4.identity(),
+                  transform: _focused ? (Matrix4.identity()..scale(1.06)) : Matrix4.identity(),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       colors: _focused
@@ -691,12 +697,12 @@ jobs:
                       color: _focused
                           ? const Color(0xFF00E5FF)
                           : (widget.isFav ? Colors.amberAccent.withOpacity(0.5) : Colors.white.withOpacity(0.08)),
-                      width: _focused ? 2.5 : 1.0,
+                      width: _focused ? 3.0 : 1.0,
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: _focused ? const Color(0xFF00E5FF).withOpacity(0.35) : Colors.black.withOpacity(0.3),
-                        blurRadius: _focused ? 16 : 8,
+                        color: _focused ? const Color(0xFF00E5FF).withOpacity(0.4) : Colors.black.withOpacity(0.3),
+                        blurRadius: _focused ? 18 : 8,
                         offset: const Offset(0, 4),
                       ),
                     ],
@@ -753,16 +759,21 @@ jobs:
                             ],
                           ),
                         ),
+                        // Botón de favorito sin capturar el foco del control remoto
                         Positioned(
                           top: 4,
                           right: 4,
-                          child: IconButton(
-                            icon: Icon(
-                              widget.isFav ? Icons.star : Icons.star_border,
-                              color: widget.isFav ? Colors.amberAccent : Colors.white38,
-                              size: 24,
+                          child: Focus(
+                            canRequestFocus: false,
+                            descendantsAreFocusable: false,
+                            child: IconButton(
+                              icon: Icon(
+                                widget.isFav ? Icons.star : Icons.star_border,
+                                color: widget.isFav ? Colors.amberAccent : Colors.white38,
+                                size: 24,
+                              ),
+                              onPressed: widget.onToggleFav,
                             ),
-                            onPressed: widget.onToggleFav,
                           ),
                         ),
                       ],
@@ -774,7 +785,7 @@ jobs:
           }
           EOF
 
-          # 7. PlayerScreen con soporte de teclado y flechas del control remoto
+          # 7. PlayerScreen con controles de teclado para control remoto
           cat << 'EOF' > lib/screens/player_screen.dart
           import 'dart:async';
           import 'package:flutter/material.dart';
@@ -870,7 +881,6 @@ jobs:
               }
             }
 
-            // Manejo de eventos del control remoto
             KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
               if (event is KeyDownEvent) {
                 if (event.logicalKey == LogicalKeyboardKey.arrowRight ||
@@ -1057,7 +1067,7 @@ jobs:
           }
           EOF
 
-          # 8. Logo Oficial de Oso Polar y Banner Panorámico para Android TV (320x180)
+          # 8. Logo Oficial de Oso Polar y Banner Panorámico Android TV
           cat << 'EOF' > /tmp/polar_bear.svg
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
             <defs>
@@ -1088,7 +1098,6 @@ jobs:
           </svg>
           EOF
 
-          # Banner oficial panorámico Android TV (320x180 px)
           cat << 'EOF' > /tmp/tv_banner.svg
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" width="320" height="180">
             <defs>
@@ -1098,7 +1107,6 @@ jobs:
               </linearGradient>
             </defs>
             <rect width="320" height="180" fill="url(#tvbg)"/>
-            <!-- Cabeza Oso Polar reducida lateral -->
             <ellipse cx="80" cy="90" rx="45" ry="40" fill="#FFFFFF"/>
             <circle cx="50" cy="55" r="14" fill="#E2F6F9"/>
             <circle cx="110" cy="55" r="14" fill="#E2F6F9"/>
@@ -1106,7 +1114,6 @@ jobs:
             <circle cx="95" cy="80" r="4" fill="#0B132B"/>
             <ellipse cx="80" cy="100" rx="18" ry="14" fill="#F8FEFF"/>
             <path d="M 74 96 Q 80 92 86 96 Q 80 104 74 96 Z" fill="#0B132B"/>
-            <!-- Texto Polar TV -->
             <text x="145" y="92" font-family="sans-serif" font-weight="900" font-size="28" fill="#FFFFFF">POLAR</text>
             <text x="245" y="92" font-family="sans-serif" font-weight="900" font-size="28" fill="#00E5FF">TV</text>
             <text x="145" y="116" font-family="sans-serif" font-weight="bold" font-size="11" fill="#48CAE4" letter-spacing="2">SMART IPTV</text>
