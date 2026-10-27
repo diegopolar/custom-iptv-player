@@ -1,4 +1,4 @@
-name: Build Custom IPTV APK
+name: Build Polar TV APK
 
 on:
   push:
@@ -24,18 +24,27 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Regenerar estructura Android y ajustar compileSdk
+      - name: Configurar proyecto Android y renombrar a Polar TV
         run: |
-          # 1. Respaldar Manifest configurado por Claude
+          # 1. Respaldar Manifest de streaming de Claude
           cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.xml.bak
           
-          # 2. Generar estructura Gradle nativa
-          flutter create --platforms=android --org com.example .
+          # 2. Generar estructura Android con nombre Polar TV
+          flutter create --platforms=android --project-name polartv --org com.polar .
           
-          # 3. Restaurar Manifest
+          # 3. Restaurar Manifest de Claude
           cp /tmp/AndroidManifest.xml.bak android/app/src/main/AndroidManifest.xml
           
-          # 4. Forzar compileSdk 36 en el proyecto y en todos los subproyectos (plugins como file_picker)
+          # 4. Inyectar nombre visible "Polar TV" en AndroidManifest
+          sed -i 's/android:label="[^"]*"/android:label="Polar TV"/g' android/app/src/main/AndroidManifest.xml
+          
+          # 5. Cambiar título interno en main.dart si existe
+          if [ -f lib/main.dart ]; then
+            sed -i "s/title: '[^']*'/title: 'Polar TV'/g" lib/main.dart
+            sed -i 's/title: "[^"]*"/title: "Polar TV"/g' lib/main.dart
+          fi
+
+          # 6. Forzar compileSdk 36 para compatibilidad con plugins
           cat << 'EOF' >> android/build.gradle
 
           subprojects {
@@ -49,14 +58,23 @@ jobs:
           }
           EOF
 
-          # 5. Obtener paquetes
+          # 7. Obtener paquetes de Flutter
           flutter pub get
 
-      - name: Compilar APK Release
-        run: flutter build apk --release
+      - name: Compilar APK con Gradle directo
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
 
-      - name: Subir APK generado
+      - name: Localizar APK generado
+        run: |
+          mkdir -p apk_output
+          find . -name "*.apk" -type f -exec cp {} apk_output/PolarTV-release.apk \;
+          ls -la apk_output/
+
+      - name: Subir APK de Polar TV
         uses: actions/upload-artifact@v4
         with:
-          name: custom-iptv-player-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: Polar-TV-APK
+          path: apk_output/PolarTV-release.apk
