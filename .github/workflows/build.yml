@@ -97,12 +97,21 @@ jobs:
           }
           EOF
 
-          # 4. Ajustar orientación vertical en player_screen.dart
-          if [ -f lib/screens/player_screen.dart ]; then
-            sed -i 's/DeviceOrientation.landscapeLeft,/DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft,/g' lib/screens/player_screen.dart
-          fi
+          # 4. Ajustar orientacion en player_screen.dart y Wakelock
+          python3 -c '
+          import os
 
-          # 5. Inyectar listas por defecto en playlist_storage.dart usando el constructor exacto
+          player_path = "lib/screens/player_screen.dart"
+          if os.path.exists(player_path):
+              with open(player_path, "r") as f:
+                  code = f.read()
+              
+              code = code.replace("DeviceOrientation.landscapeLeft,", "DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft,")
+              with open(player_path, "w") as f:
+                  f.write(code)
+          '
+
+          # 5. Inyectar listas por defecto en playlist_storage.dart
           python3 -c '
           import os
 
@@ -111,7 +120,6 @@ jobs:
               with open(storage_path, "r") as f:
                   code = f.read()
               
-              # Detectar la llamada donde devuelve la lista guardada e inyectar si está vacía
               hook = "return list;"
               replacement = """if (list.isEmpty) {
                     final defaultList = [
@@ -186,12 +194,21 @@ jobs:
 
           flutter pub get
 
-      - name: Compilar APK Release
-        run: flutter build apk --release
+      - name: Compilar APK con Gradle directamente
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease
+
+      - name: Extraer APK y preparar descarga
+        run: |
+          mkdir -p output_apk
+          find . -type f -name "*release*.apk" -exec cp {} output_apk/PolarTV.apk \;
+          ls -lh output_apk/
 
       - name: Subir APK de Polar TV
         uses: actions/upload-artifact@v4
         with:
           name: Polar-TV-APK
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: output_apk/PolarTV.apk
           if-no-files-found: error
