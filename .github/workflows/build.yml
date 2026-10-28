@@ -33,7 +33,7 @@ jobs:
           keytool -genkey -v -keystore /home/runner/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || true
           cp /home/runner/.android/debug.keystore /home/runner/.config/.android/debug.keystore || true
 
-      - name: Configurar Polar TV (Favoritos D-Pad Long Press y Tecla Directa)
+      - name: Configurar Polar TV Pro (Mini-Guía, Recientes, Aspect Ratio y Fix Favoritos Múltiples)
         run: |
           # 1. Regenerar base Android limpia
           flutter create --platforms=android --project-name polartv --org com.polar .
@@ -84,7 +84,7 @@ jobs:
           </manifest>
           EOF
 
-          # 3. MainActivity.kt con pantalla encendida
+          # 3. MainActivity.kt con pantalla activa
           mkdir -p android/app/src/main/kotlin/com/polar/polartv
           cat << 'EOF' > android/app/src/main/kotlin/com/polar/polartv/MainActivity.kt
           package com.polar.polartv
@@ -248,7 +248,7 @@ jobs:
                           color: const Color(0xFF00F5D4).withOpacity(0.15),
                           borderRadius: BorderRadius.circular(6),
                         ),
-                        child: const Text('EXECUTIVE', style: TextStyle(color: Color(0xFF00F5D4), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                        child: const Text('PRO', style: TextStyle(color: Color(0xFF00F5D4), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1)),
                       ),
                     ],
                   ),
@@ -377,7 +377,7 @@ jobs:
           }
           EOF
 
-          # 6. ChannelsScreen: Soporte de Long Press de D-Pad medido con Timer y Tecla Play/Menu para Favoritos
+          # 6. ChannelsScreen: Con pestaña Recientes, fix definitivo de Favoritos múltiples y ValueKeys
           cat << 'EOF' > lib/screens/channels_screen.dart
           import 'dart:async';
           import 'package:flutter/material.dart';
@@ -399,10 +399,12 @@ jobs:
             List<Channel> _all = [];
             List<Channel> _filtered = [];
             Set<String> _favUrls = {};
+            List<String> _recentUrls = [];
             String _selectedCategory = 'Todos';
             String _query = '';
             bool _loading = true;
             bool _onlyFavs = false;
+            bool _onlyRecents = false;
             bool _showSearch = false;
 
             @override
@@ -414,7 +416,9 @@ jobs:
             Future<void> _init() async {
               final prefs = await SharedPreferences.getInstance();
               final favs = prefs.getStringList('polar_favs') ?? [];
+              final recents = prefs.getStringList('polar_recents') ?? [];
               _favUrls = favs.toSet();
+              _recentUrls = recents;
 
               try {
                 final channels = await PlaylistStorage().loadChannels(widget.playlist);
@@ -427,16 +431,20 @@ jobs:
             }
 
             Future<void> _toggleFav(Channel c) async {
-              final isNowFav = !_favUrls.contains(c.url);
-              setState(() {
-                if (isNowFav) {
-                  _favUrls.add(c.url);
-                } else {
-                  _favUrls.remove(c.url);
-                }
-              });
               final prefs = await SharedPreferences.getInstance();
-              await prefs.setStringList('polar_favs', _favUrls.toList());
+              final favs = (prefs.getStringList('polar_favs') ?? []).toSet();
+              final isAdding = !favs.contains(c.url);
+
+              if (isAdding) {
+                favs.add(c.url);
+              } else {
+                favs.remove(c.url);
+              }
+              await prefs.setStringList('polar_favs', favs.toList());
+
+              setState(() {
+                _favUrls = favs;
+              });
 
               if (mounted) {
                 ScaffoldMessenger.of(context).clearSnackBars();
@@ -453,10 +461,10 @@ jobs:
                     content: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(isNowFav ? Icons.star_rounded : Icons.star_border_rounded, color: const Color(0xFF00F5D4), size: 22),
+                        Icon(isAdding ? Icons.star_rounded : Icons.star_border_rounded, color: const Color(0xFF00F5D4), size: 22),
                         const SizedBox(width: 10),
                         Text(
-                          isNowFav ? '${c.name} añadido a Favoritos' : '${c.name} quitado de Favoritos',
+                          isAdding ? '${c.name} añadido a Favoritos' : '${c.name} quitado de Favoritos',
                           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                         ),
                       ],
@@ -467,13 +475,24 @@ jobs:
               _applyFilter();
             }
 
+            Future<void> _addToRecents(Channel c) async {
+              final prefs = await SharedPreferences.getInstance();
+              List<String> recents = prefs.getStringList('polar_recents') ?? [];
+              recents.remove(c.url);
+              recents.insert(0, c.url);
+              if (recents.length > 20) recents = recents.sublist(0, 20);
+              await prefs.setStringList('polar_recents', recents);
+              _recentUrls = recents;
+            }
+
             void _applyFilter() {
               setState(() {
                 _filtered = _all.where((c) {
                   final matchesQuery = c.name.toLowerCase().contains(_query.toLowerCase());
                   final matchesCat = _selectedCategory == 'Todos' || c.group == _selectedCategory;
                   final matchesFav = !_onlyFavs || _favUrls.contains(c.url);
-                  return matchesQuery && matchesCat && matchesFav;
+                  final matchesRecent = !_onlyRecents || _recentUrls.contains(c.url);
+                  return matchesQuery && matchesCat && matchesFav && matchesRecent;
                 }).toList();
               });
             }
@@ -502,8 +521,33 @@ jobs:
                       icon: Icon(_showSearch ? Icons.close : Icons.search_rounded, color: Colors.white70),
                       onPressed: () => setState(() => _showSearch = !_showSearch),
                     ),
+                    // Pestaña Recientes
                     Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                      child: TextButton.icon(
+                        style: TextButton.styleFrom(
+                          backgroundColor: _onlyRecents ? const Color(0xFF00F5D4) : const Color(0xFF13191C),
+                          foregroundColor: _onlyRecents ? const Color(0xFF0A0D0F) : Colors.white70,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        icon: Icon(
+                          Icons.history_rounded,
+                          size: 18,
+                          color: _onlyRecents ? const Color(0xFF0A0D0F) : const Color(0xFF00F5D4),
+                        ),
+                        label: const Text('Recientes', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                        onPressed: () {
+                          setState(() {
+                            _onlyRecents = !_onlyRecents;
+                            if (_onlyRecents) _onlyFavs = false;
+                          });
+                          _applyFilter();
+                        },
+                      ),
+                    ),
+                    // Pestaña Favoritos
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
                       child: TextButton.icon(
                         style: TextButton.styleFrom(
                           backgroundColor: _onlyFavs ? const Color(0xFF00F5D4) : const Color(0xFF13191C),
@@ -520,11 +564,15 @@ jobs:
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                         ),
                         onPressed: () {
-                          setState(() => _onlyFavs = !_onlyFavs);
+                          setState(() {
+                            _onlyFavs = !_onlyFavs;
+                            if (_onlyFavs) _onlyRecents = false;
+                          });
                           _applyFilter();
                         },
                       ),
                     ),
+                    const SizedBox(width: 8),
                   ],
                 ),
                 body: _loading
@@ -552,7 +600,7 @@ jobs:
                                 },
                               ),
                             ),
-                          if (!_onlyFavs && _categories.length > 1)
+                          if (!_onlyFavs && !_onlyRecents && _categories.length > 1)
                             Container(
                               height: 40,
                               margin: const EdgeInsets.symmetric(vertical: 6),
@@ -586,7 +634,9 @@ jobs:
                             child: _filtered.isEmpty
                                 ? Center(
                                     child: Text(
-                                      _onlyFavs ? 'Sin canales favoritos guardados' : 'No se encontraron canales',
+                                      _onlyFavs
+                                          ? 'Sin canales favoritos'
+                                          : (_onlyRecents ? 'Aún no has visto canales recientemente' : 'No se encontraron canales'),
                                       style: const TextStyle(color: Colors.white38, fontSize: 14),
                                     ),
                                   )
@@ -608,11 +658,13 @@ jobs:
                                           final c = _filtered[i];
                                           final isFav = _favUrls.contains(c.url);
                                           return _ExecutiveChannelTile(
+                                            key: ValueKey(c.url),
                                             autofocus: i == 0,
                                             channel: c,
                                             isFav: isFav,
                                             onToggleFav: () => _toggleFav(c),
                                             onTap: () {
+                                              _addToRecents(c);
                                               Navigator.push(
                                                 context,
                                                 MaterialPageRoute(
@@ -621,9 +673,7 @@ jobs:
                                                     index: i,
                                                   ),
                                                 ),
-                                              ).then((_) {
-                                                _init();
-                                              });
+                                              ).then((_) => _init());
                                             },
                                           );
                                         },
@@ -645,6 +695,7 @@ jobs:
             final bool autofocus;
 
             const _ExecutiveChannelTile({
+              super.key,
               required this.channel,
               required this.isFav,
               required this.onToggleFav,
@@ -678,7 +729,7 @@ jobs:
                 autofocus: widget.autofocus,
                 onFocusChange: (has) {
                   if (!has) _cancelTimer();
-                  setState(() => _focused = has);
+                  if (mounted) setState(() => _focused = has);
                 },
                 onKeyEvent: (node, event) {
                   final isOkKey = event.logicalKey == LogicalKeyboardKey.select ||
@@ -686,7 +737,6 @@ jobs:
                                   event.logicalKey == LogicalKeyboardKey.numpadEnter ||
                                   event.logicalKey == LogicalKeyboardKey.gameButtonA;
 
-                  // Teclas directas de control remoto para Favoritos (Play, Menu, Info)
                   final isFavKey = event.logicalKey == LogicalKeyboardKey.mediaPlayPause ||
                                    event.logicalKey == LogicalKeyboardKey.mediaPlay ||
                                    event.logicalKey == LogicalKeyboardKey.contextMenu ||
@@ -821,7 +871,7 @@ jobs:
           }
           EOF
 
-          # 7. PlayerScreen
+          # 7. PlayerScreen: Con Mini-Guía Lateral (▲ / ▼), Selector de Aspect Ratio y Retroceso Seguro
           cat << 'EOF' > lib/screens/player_screen.dart
           import 'dart:async';
           import 'package:flutter/material.dart';
@@ -844,12 +894,16 @@ jobs:
             late int _currentIndex;
             VideoPlayerController? _controller;
             bool _showControls = true;
+            bool _showMiniGuide = false;
             bool _isLoading = true;
             bool _hasError = false;
             bool _isPopping = false;
             bool _isCurrentFav = false;
+            BoxFit _aspectFit = BoxFit.contain;
+            String _aspectLabel = 'Ajustar';
             Timer? _hideTimer;
-            final FocusNode _focusNode = FocusNode();
+            final FocusNode _playerFocusNode = FocusNode();
+            final ScrollController _miniGuideController = ScrollController();
 
             @override
             void initState() {
@@ -858,7 +912,7 @@ jobs:
               _checkFav();
               _playChannel();
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                _focusNode.requestFocus();
+                _playerFocusNode.requestFocus();
               });
             }
 
@@ -888,6 +942,22 @@ jobs:
               });
 
               await prefs.setStringList('polar_favs', favs.toList());
+            }
+
+            void _cycleAspectRatio() {
+              setState(() {
+                if (_aspectFit == BoxFit.contain) {
+                  _aspectFit = BoxFit.cover;
+                  _aspectLabel = 'Zoom (16:9)';
+                } else if (_aspectFit == BoxFit.cover) {
+                  _aspectFit = BoxFit.fill;
+                  _aspectLabel = 'Estirar';
+                } else {
+                  _aspectFit = BoxFit.contain;
+                  _aspectLabel = 'Ajustar';
+                }
+              });
+              _resetTimer();
             }
 
             Future<void> _playChannel() async {
@@ -920,12 +990,34 @@ jobs:
             }
 
             void _toggleControls() {
+              if (_showMiniGuide) {
+                setState(() => _showMiniGuide = false);
+                return;
+              }
               setState(() {
                 _showControls = !_showControls;
               });
               if (_showControls) {
                 _resetTimer();
               }
+            }
+
+            void _toggleMiniGuide() {
+              setState(() {
+                _showMiniGuide = !_showMiniGuide;
+                if (_showMiniGuide) {
+                  _showControls = false;
+                  _hideTimer?.cancel();
+                  // Centrar el scroll de la mini-guía en el canal actual
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (_miniGuideController.hasClients) {
+                      _miniGuideController.jumpTo((_currentIndex * 56.0).clamp(0.0, _miniGuideController.position.maxScrollExtent));
+                    }
+                  });
+                } else {
+                  _playerFocusNode.requestFocus();
+                }
+              });
             }
 
             void _resetTimer() {
@@ -951,6 +1043,16 @@ jobs:
               }
             }
 
+            void _selectFromMiniGuide(int idx) {
+              setState(() {
+                _currentIndex = idx;
+                _showMiniGuide = false;
+              });
+              _checkFav();
+              _playChannel();
+              _playerFocusNode.requestFocus();
+            }
+
             void _safePop() {
               if (_isPopping) return;
               _isPopping = true;
@@ -959,27 +1061,46 @@ jobs:
 
             KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
               if (event is KeyDownEvent) {
-                if (event.logicalKey == LogicalKeyboardKey.arrowRight ||
-                    event.logicalKey == LogicalKeyboardKey.channelUp) {
-                  _nextChannel();
-                  _showTempControls();
-                  return KeyEventResult.handled;
-                } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
-                           event.logicalKey == LogicalKeyboardKey.channelDown) {
-                  _prevChannel();
-                  _showTempControls();
-                  return KeyEventResult.handled;
-                } else if (event.logicalKey == LogicalKeyboardKey.select ||
-                           event.logicalKey == LogicalKeyboardKey.enter ||
-                           event.logicalKey == LogicalKeyboardKey.numpadEnter ||
-                           event.logicalKey == LogicalKeyboardKey.gameButtonA) {
-                  _toggleControls();
-                  return KeyEventResult.handled;
-                } else if (event.logicalKey == LogicalKeyboardKey.contextMenu ||
-                           event.logicalKey == LogicalKeyboardKey.info ||
-                           event.logicalKey == LogicalKeyboardKey.mediaPlayPause) {
-                  _toggleFav();
-                  return KeyEventResult.handled;
+                // Flechas arriba/abajo abren la mini-guía lateral
+                if (event.logicalKey == LogicalKeyboardKey.arrowUp ||
+                    event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                  if (!_showMiniGuide) {
+                    _toggleMiniGuide();
+                    return KeyEventResult.handled;
+                  }
+                }
+
+                if (!_showMiniGuide) {
+                  if (event.logicalKey == LogicalKeyboardKey.arrowRight ||
+                      event.logicalKey == LogicalKeyboardKey.channelUp) {
+                    _nextChannel();
+                    _showTempControls();
+                    return KeyEventResult.handled;
+                  } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
+                             event.logicalKey == LogicalKeyboardKey.channelDown) {
+                    _prevChannel();
+                    _showTempControls();
+                    return KeyEventResult.handled;
+                  } else if (event.logicalKey == LogicalKeyboardKey.select ||
+                             event.logicalKey == LogicalKeyboardKey.enter ||
+                             event.logicalKey == LogicalKeyboardKey.numpadEnter ||
+                             event.logicalKey == LogicalKeyboardKey.gameButtonA) {
+                    _toggleControls();
+                    return KeyEventResult.handled;
+                  } else if (event.logicalKey == LogicalKeyboardKey.contextMenu ||
+                             event.logicalKey == LogicalKeyboardKey.info ||
+                             event.logicalKey == LogicalKeyboardKey.mediaPlayPause) {
+                    _toggleFav();
+                    return KeyEventResult.handled;
+                  }
+                } else {
+                  // Si la mini-guía está abierta, escape/atrás la cierra sin salirse
+                  if (event.logicalKey == LogicalKeyboardKey.escape ||
+                      event.logicalKey == LogicalKeyboardKey.goBack) {
+                    setState(() => _showMiniGuide = false);
+                    _playerFocusNode.requestFocus();
+                    return KeyEventResult.handled;
+                  }
                 }
               }
               return KeyEventResult.ignored;
@@ -994,7 +1115,8 @@ jobs:
             void dispose() {
               _hideTimer?.cancel();
               _controller?.dispose();
-              _focusNode.dispose();
+              _playerFocusNode.dispose();
+              _miniGuideController.dispose();
               super.dispose();
             }
 
@@ -1006,13 +1128,18 @@ jobs:
                 canPop: false,
                 onPopInvokedWithResult: (didPop, result) {
                   if (!didPop) {
-                    _safePop();
+                    if (_showMiniGuide) {
+                      setState(() => _showMiniGuide = false);
+                      _playerFocusNode.requestFocus();
+                    } else {
+                      _safePop();
+                    }
                   }
                 },
                 child: Scaffold(
                   backgroundColor: Colors.black,
                   body: Focus(
-                    focusNode: _focusNode,
+                    focusNode: _playerFocusNode,
                     onKeyEvent: _handleKeyEvent,
                     autofocus: true,
                     child: GestureDetector(
@@ -1020,11 +1147,18 @@ jobs:
                       behavior: HitTestBehavior.opaque,
                       child: Stack(
                         children: [
+                          // Reproductor con Aspect Ratio dinámico
                           Center(
                             child: _controller != null && _controller!.value.isInitialized
-                                ? AspectRatio(
-                                    aspectRatio: _controller!.value.aspectRatio,
-                                    child: VideoPlayer(_controller!),
+                                ? SizedBox.expand(
+                                    child: FittedBox(
+                                      fit: _aspectFit,
+                                      child: SizedBox(
+                                        width: _controller!.value.size.width,
+                                        height: _controller!.value.size.height,
+                                        child: VideoPlayer(_controller!),
+                                      ),
+                                    ),
                                   )
                                 : _isLoading
                                     ? const CircularProgressIndicator(color: Color(0xFF00F5D4))
@@ -1042,6 +1176,8 @@ jobs:
                                           )
                                         : const SizedBox.shrink(),
                           ),
+
+                          // Controles Overlay Superiores e Inferiores
                           AnimatedOpacity(
                             opacity: _showControls ? 1.0 : 0.0,
                             duration: const Duration(milliseconds: 200),
@@ -1090,13 +1226,31 @@ jobs:
                                                 ],
                                               ),
                                             ),
+                                            // Selector de Relación de Aspecto
+                                            TextButton.icon(
+                                              style: TextButton.styleFrom(
+                                                backgroundColor: const Color(0xFF11171A),
+                                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                              ),
+                                              icon: const Icon(Icons.aspect_ratio_rounded, color: Color(0xFF00F5D4), size: 18),
+                                              label: Text(_aspectLabel, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                                              onPressed: _cycleAspectRatio,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            // Botón Mini-Guía
+                                            IconButton(
+                                              icon: const Icon(Icons.menu_open_rounded, color: Colors.white70, size: 26),
+                                              tooltip: 'Mini-Guía',
+                                              onPressed: _toggleMiniGuide,
+                                            ),
+                                            // Botón Favorito
                                             IconButton(
                                               icon: Icon(
                                                 _isCurrentFav ? Icons.star_rounded : Icons.star_outline_rounded,
                                                 color: _isCurrentFav ? const Color(0xFF00F5D4) : Colors.white60,
-                                                size: 30,
+                                                size: 28,
                                               ),
-                                              tooltip: 'Guardar Favorito',
+                                              tooltip: 'Favorito',
                                               onPressed: _toggleFav,
                                             ),
                                           ],
@@ -1135,7 +1289,7 @@ jobs:
                                                   Icon(Icons.circle, color: Color(0xFF00F5D4), size: 10),
                                                   SizedBox(width: 8),
                                                   Text(
-                                                    'EN VIVO • Flechas ◄ ► cambian canal • Atrás regresa a canales',
+                                                    'EN VIVO • Flechas ▲ ▼ Mini-Guía • ◄ ► Canal • Atrás regresa',
                                                     style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
                                                   ),
                                                 ],
@@ -1150,9 +1304,150 @@ jobs:
                               ),
                             ),
                           ),
+
+                          // Mini-Guía Lateral Superpuesta (Quick Channel Switch)
+                          if (_showMiniGuide)
+                            Positioned(
+                              top: 0,
+                              bottom: 0,
+                              right: 0,
+                              width: 320,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF0A0D0F).withOpacity(0.92),
+                                  border: Border(left: BorderSide(color: const Color(0xFF00F5D4).withOpacity(0.3))),
+                                  boxShadow: [
+                                    BoxShadow(color: Colors.black.withOpacity(0.6), blurRadius: 20),
+                                  ],
+                                ),
+                                child: SafeArea(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Padding(
+                                        padding: const EdgeInsets.all(16),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            const Text(
+                                              'GUÍA RÁPIDA',
+                                              style: TextStyle(color: Color(0xFF00F5D4), fontWeight: FontWeight.w900, fontSize: 14, letterSpacing: 1.5),
+                                            ),
+                                            IconButton(
+                                              icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 20),
+                                              onPressed: () {
+                                                setState(() => _showMiniGuide = false);
+                                                _playerFocusNode.requestFocus();
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const Divider(height: 1, color: Colors.white10),
+                                      Expanded(
+                                        child: ListView.builder(
+                                          controller: _miniGuideController,
+                                          padding: const EdgeInsets.symmetric(vertical: 8),
+                                          itemCount: widget.channels.length,
+                                          itemBuilder: (ctx, i) {
+                                            final ch = widget.channels[i];
+                                            final isPlaying = i == _currentIndex;
+                                            return _MiniGuideItem(
+                                              channel: ch,
+                                              isPlaying: isPlaying,
+                                              onTap: () => _selectFromMiniGuide(i),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                     ),
+                  ),
+                ),
+              );
+            }
+          }
+
+          class _MiniGuideItem extends StatefulWidget {
+            final Channel channel;
+            final bool isPlaying;
+            final VoidCallback onTap;
+
+            const _MiniGuideItem({
+              required this.channel,
+              required this.isPlaying,
+              required this.onTap,
+            });
+
+            @override
+            State<_MiniGuideItem> createState() => _MiniGuideItemState();
+          }
+
+          class _MiniGuideItemState extends State<_MiniGuideItem> {
+            bool _focused = false;
+
+            @override
+            Widget build(BuildContext context) {
+              return Focus(
+                onFocusChange: (has) => setState(() => _focused = has),
+                onKeyEvent: (node, event) {
+                  if (event is KeyDownEvent) {
+                    if (event.logicalKey == LogicalKeyboardKey.select ||
+                        event.logicalKey == LogicalKeyboardKey.enter ||
+                        event.logicalKey == LogicalKeyboardKey.numpadEnter ||
+                        event.logicalKey == LogicalKeyboardKey.gameButtonA) {
+                      widget.onTap();
+                      return KeyEventResult.handled;
+                    }
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: _focused
+                        ? const Color(0xFF162325)
+                        : (widget.isPlaying ? const Color(0xFF00F5D4).withOpacity(0.12) : Colors.transparent),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: _focused
+                          ? const Color(0xFF00F5D4)
+                          : (widget.isPlaying ? const Color(0xFF00F5D4).withOpacity(0.4) : Colors.transparent),
+                      width: _focused ? 2.0 : 1.0,
+                    ),
+                  ),
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                    leading: widget.channel.logo != null && widget.channel.logo!.isNotEmpty
+                        ? Image.network(
+                            widget.channel.logo!,
+                            width: 28,
+                            height: 28,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => const Icon(Icons.tv_rounded, size: 22, color: Color(0xFF00F5D4)),
+                          )
+                        : const Icon(Icons.tv_rounded, size: 22, color: Color(0xFF00F5D4)),
+                    title: Text(
+                      widget.channel.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: widget.isPlaying ? FontWeight.w800 : FontWeight.w500,
+                        color: widget.isPlaying ? const Color(0xFF00F5D4) : Colors.white,
+                      ),
+                    ),
+                    trailing: widget.isPlaying
+                        ? const Icon(Icons.volume_up_rounded, color: Color(0xFF00F5D4), size: 16)
+                        : null,
+                    onTap: widget.onTap,
                   ),
                 ),
               );
@@ -1209,7 +1504,7 @@ jobs:
             <path d="M 74 96 Q 80 92 86 96 Q 80 104 74 96 Z" fill="#0A0D0F"/>
             <text x="145" y="92" font-family="sans-serif" font-weight="900" font-size="28" fill="#FFFFFF">POLAR</text>
             <text x="245" y="92" font-family="sans-serif" font-weight="900" font-size="28" fill="#00F5D4">TV</text>
-            <text x="145" y="116" font-family="sans-serif" font-weight="bold" font-size="11" fill="#2EC4B6" letter-spacing="2">EXECUTIVE IPTV</text>
+            <text x="145" y="116" font-family="sans-serif" font-weight="bold" font-size="11" fill="#2EC4B6" letter-spacing="2">PRO IPTV</text>
           </svg>
           EOF
 
